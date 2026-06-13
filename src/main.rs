@@ -1,20 +1,28 @@
 use tokio::time::{self, Duration, Instant};
 mod rip_deamon;
 use rip_deamon::RipDeamon;
-mod routing_table;
+mod cfg;
+mod common;
 mod rip_socket;
+mod routing_table;
+use common::Result;
 
-async fn run_rip_deamon() {
+async fn run_rip_deamon() -> Result<()> {
     let deamon = RipDeamon::new();
-    deamon.run().await
-
+    deamon.setup("/home/konrad/projects/rip_v2/src/cfg.yml")?;
+    deamon.run().await;
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() {
-
     tokio::spawn(async {
-        run_rip_deamon().await;
+        let result = run_rip_deamon().await;
+
+        result.map_err(|err| {
+            println!("error: {:?}", err);
+            std::process::exit(1);
+        })
     });
 
     let route_timeout_1 = time::sleep(Duration::from_secs(5));
