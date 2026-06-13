@@ -20,7 +20,7 @@ async fn main() {
         let result = run_rip_deamon().await;
 
         result.map_err(|err| {
-            println!("error: {:?}", err);
+            println!("error: {}", err.to_string());
             std::process::exit(1);
         })
     });
