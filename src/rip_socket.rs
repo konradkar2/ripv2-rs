@@ -36,7 +36,7 @@ fn ifc_nametoindex(if_name: &str) -> io::Result<u32> {
 }
 
 impl RipSocket {
-    pub fn create_and_configure(if_name: &str) -> io::Result<Self> {
+    pub fn create(if_name: &str) -> io::Result<Self> {
         let socket = s2::Socket::new(s2::Domain::IPV4, s2::Type::DGRAM, Some(s2::Protocol::UDP))?;
         let if_index = ifc_nametoindex(if_name)?;
 
@@ -45,25 +45,35 @@ impl RipSocket {
             dev: if_name.to_string(),
             if_index,
         };
-
-        socket.configure()?;
         Ok(socket)
     }
 
-    fn configure(&self) -> io::Result<()> {
-        self.socket.set_nonblocking(true)?;
+    fn bind_port_and_device(&self) -> io::Result<()> {
         self.socket.bind_device(Some(self.dev.as_bytes()))?;
         self.socket.set_reuse_port(true)?;
 
         let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RIP_UDP_PORT);
         let addr = s2::SockAddr::from(addr);
         self.socket.bind(&addr)?;
+        Ok(())
+    }
+
+    pub fn configure_as_multicast_rx(&self) -> io::Result<()> {
+        self.bind_port_and_device()?;
+        self.socket.set_nonblocking(true)?;
 
         let ifc_index = s2::InterfaceIndexOrAddress::Index(self.if_index);
         self.socket.join_multicast_v4_n(
             &Ipv4Addr::from_str(RIP_MULTICAST_ADDR).ok().unwrap(),
             &ifc_index,
         )?;
+
+        Ok(())
+    }
+
+    pub fn configure_as_multicast_tx(&self) -> io::Result<()> {
+        self.bind_port_and_device()?;
+        self.socket.set_multicast_loop_v4(false)?;
 
         Ok(())
     }

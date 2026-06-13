@@ -1,15 +1,31 @@
-use crate::cfg::parse;
+use crate::cfg::RipConfiguration;
 use crate::common::Error;
 use crate::common::Result;
 use crate::rip_socket::RipSocket;
 use crate::routing_table::RoutingTable;
-use std::env;
-use std::fs;
+use std::io;
 use tokio::time::{self, Duration, Instant};
+
+struct SocketPair {
+    tx: RipSocket,
+    rx: RipSocket,
+}
+
+impl SocketPair {
+    fn create_and_configure(dev: &str) -> io::Result<SocketPair> {
+        let rx = RipSocket::create(dev)?;
+        rx.configure_as_multicast_rx()?;
+
+        let tx = RipSocket::create(dev)?;
+        tx.configure_as_multicast_tx()?;
+
+        Ok(Self { tx, rx })
+    }
+}
 
 pub struct RipDeamon {
     routing_table: RoutingTable,
-    sockets: Vec<RipSocket>,
+    sockets: Vec<SocketPair>,
 }
 
 impl RipDeamon {
@@ -20,11 +36,22 @@ impl RipDeamon {
         };
     }
 
-    pub fn setup(&self, cfg_path: &str) -> Result<()> {
-        let contents = fs::read_to_string(cfg_path).map_err(|err| {
-            return Error::InvalidConfiguration(format!("{}: {}", err.to_string(), cfg_path));
-        })?;
-        let _rip_cfg = parse(contents.as_str())?;
+    fn setup_sockets(&mut self, cfg: &RipConfiguration) -> Result<()> {
+        for ifc_cfg in cfg.rip_interfaces.iter() {
+            let dev = ifc_cfg.dev.as_str();
+            
+            let socket_pair = SocketPair::create_and_configure(dev).map_err(|err| {
+                return Error::OsError(format!("{}: device: {}", err.to_string(), dev));
+            })?;
+            self.sockets.push(socket_pair);
+        }
+
+        Ok(())
+    }
+
+    pub fn setup(&mut self, cfg_path: &str) -> Result<()> {
+        let rip_cfg = RipConfiguration::read_and_parse(cfg_path)?;
+        self.setup_sockets(&rip_cfg)?;
 
         Ok(())
     }

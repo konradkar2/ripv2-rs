@@ -6,10 +6,20 @@ mod common;
 mod rip_socket;
 mod routing_table;
 use common::Result;
+use std::env;
+
+fn get_cfg_path() -> Result<String> {
+    let mut args_iter = env::args().into_iter();
+    args_iter.next().expect("program name");
+    args_iter.next().ok_or(common::Error::InvalidArgument(
+        "missing configuration path".to_string(),
+    ))
+}
 
 async fn run_rip_deamon() -> Result<()> {
-    let deamon = RipDeamon::new();
-    deamon.setup("/home/konrad/projects/rip_v2/src/cfg.yml")?;
+    let mut deamon = RipDeamon::new();
+    let cfg_path = get_cfg_path()?;
+    deamon.setup(cfg_path.as_str())?;
     deamon.run().await;
     Ok(())
 }
