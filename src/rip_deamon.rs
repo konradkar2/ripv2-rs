@@ -1,10 +1,11 @@
 use crate::cfg::parse;
+use crate::common::Error;
+use crate::common::Result;
 use crate::rip_socket::RipSocket;
 use crate::routing_table::RoutingTable;
 use std::env;
 use std::fs;
 use tokio::time::{self, Duration, Instant};
-use crate::common::Result;
 
 pub struct RipDeamon {
     routing_table: RoutingTable,
@@ -19,9 +20,10 @@ impl RipDeamon {
         };
     }
 
-    pub fn setup(&self, cfg_path: &str) -> Result<()>{
-        let contents =
-            fs::read_to_string(cfg_path).expect("Should have been able to read the file");
+    pub fn setup(&self, cfg_path: &str) -> Result<()> {
+        let contents = fs::read_to_string(cfg_path).map_err(|err| {
+            return Error::InvalidConfiguration(format!("{}: {}", err.to_string(), cfg_path));
+        })?;
         let _rip_cfg = parse(contents.as_str())?;
 
         Ok(())
