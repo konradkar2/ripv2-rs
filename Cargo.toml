@@ -1,0 +1,11 @@
+[package]
+name = "rip_v2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ipnetwork = "0.21.1"
+libc = "0.2.186"
+rtnetlink = "0.21.0"
+socket2 = "0.6.4"
+tokio = { version = "1.52.3", features = ["full"] }
