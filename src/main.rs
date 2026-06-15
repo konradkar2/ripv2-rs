@@ -5,6 +5,8 @@ mod cfg;
 mod common;
 mod rip_socket;
 mod routing_table;
+mod rip_updater;
+mod ifc;
 use common::Result;
 use std::env;
 
@@ -53,7 +55,6 @@ async fn main() {
                     .as_mut()
                     .reset(Instant::now() + Duration::from_secs(5));
             }
-
             _ = &mut route_timeout_2 => {
                 println!("timeout_2 expire");
 
@@ -61,7 +62,6 @@ async fn main() {
                     .as_mut()
                     .reset(Instant::now() + Duration::from_secs(20));
             }
-
             _ = &mut route_timeout_3 => {
                 println!("timeout_3 expire");
 

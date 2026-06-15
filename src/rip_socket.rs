@@ -1,16 +1,31 @@
 use socket2 as s2;
 use std::net::{Ipv4Addr, SocketAddrV4};
 
+use crate::common::*;
 use std::io;
 use std::str::FromStr;
-
-const RIP_MULTICAST_ADDR: &str = "224.0.0.9";
-const RIP_UDP_PORT: u16 = 520;
 
 pub struct RipSocket {
     socket: s2::Socket,
     dev: String,
     if_index: u32,
+}
+
+pub struct SocketPair {
+    pub tx: RipSocket,
+    pub rx: RipSocket,
+}
+
+impl SocketPair {
+    pub fn create_and_configure(if_name: &str) -> io::Result<SocketPair> {
+        let rx = RipSocket::create(if_name)?;
+        rx.configure_as_multicast_rx()?;
+
+        let tx = RipSocket::create(if_name)?;
+        tx.configure_as_multicast_tx()?;
+
+        Ok(Self { tx, rx })
+    }
 }
 
 fn ifc_nametoindex(if_name: &str) -> io::Result<u32> {
@@ -74,6 +89,24 @@ impl RipSocket {
     pub fn configure_as_multicast_tx(&self) -> io::Result<()> {
         self.bind_port_and_device()?;
         self.socket.set_multicast_loop_v4(false)?;
+
+        Ok(())
+    }
+
+    pub fn send_multicast(&self, buffer: &[u8]) -> io::Result<()> {
+        let addr = SocketAddrV4::new(
+            Ipv4Addr::from_str(RIP_MULTICAST_ADDR).unwrap(),
+            RIP_UDP_PORT,
+        );
+        let addr = s2::SockAddr::from(addr);
+
+        let sentn = self.socket.send_to(buffer, &addr)?;
+        if sentn != buffer.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "failed to send full RIP packet",
+            ));
+        }
 
         Ok(())
     }
