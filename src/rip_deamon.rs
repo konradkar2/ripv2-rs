@@ -5,12 +5,21 @@ use crate::common::Result;
 use crate::rip_socket::SocketPair;
 use crate::rip_updater::RipUpdater;
 use crate::routing_table::RoutingTable;
+use std::future;
 use std::io;
-use tokio::time::{self, Duration, Instant};
+use std::pin::Pin;
+use tokio::time::{self, Duration, Instant, Sleep};
 pub struct RipDeamon {
     routing_table: RoutingTable,
     sockets: Vec<SocketPair>,
     //updater: RipUpdater,
+}
+
+async fn wait_optional_timer(timer: &mut Option<Pin<Box<Sleep>>>) {
+    match timer {
+        Some(timer) => timer.as_mut().await,
+        None => future::pending::<()>().await,
+    }
 }
 
 impl RipDeamon {
@@ -46,16 +55,25 @@ impl RipDeamon {
         Ok(())
     }
 
-    pub async fn run(self: &Self) -> common::Result<()> {
-        let route_timeout_1 = time::sleep(Duration::from_secs(5));
-        tokio::pin!(route_timeout_1);
-        loop {
-            tokio::select! {
-                 _ = &mut route_timeout_1 => {
-                    println!("Warmup timer triggered");
-                    RipUpdater::rip_send_request_multicast(&self.sockets).map_err(|err| return common::Error::IoError(err.to_string()))?;
-                }
+
+    pub async fn run(&self) -> common::Result<()> {
+    let mut warmup_timer = Some(Box::pin(time::sleep(Duration::from_secs(3))));
+
+    loop {
+        tokio::select! {
+            _ = wait_optional_timer(&mut warmup_timer) => {
+                warmup_timer = None;
+
+                println!("Warmup timer triggered");
+                RipUpdater::rip_send_request_multicast(&self.sockets).await
+                    .map_err(|err| common::Error::IoError(err.to_string()))?;
             }
+
+            // tutaj odbiór z socketu:
+            // result = self.recv_rip_message() => {
+            //     ...
+            // }
         }
     }
+}
 }

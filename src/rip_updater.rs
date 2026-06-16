@@ -1,45 +1,40 @@
 use std::io::{self};
 
 use crate::common::*;
-use crate::rip_socket::SocketPair;
 use crate::ifc::*;
+use crate::rip_socket::SocketPair;
 use std::{mem::size_of, slice};
 
 fn as_bytes<T>(value: &T) -> &[u8] {
-    unsafe {
-        slice::from_raw_parts(
-            (value as *const T).cast::<u8>(),
-            size_of::<T>(),
-        )
-    }
+    unsafe { slice::from_raw_parts((value as *const T).cast::<u8>(), size_of::<T>()) }
 }
 
-pub struct RipUpdater {
-    
-}
+pub struct RipUpdater {}
 
 impl RipUpdater {
-    pub fn rip_send_request_multicast(sockets: &Vec<SocketPair>) -> io::Result<()> {
+    pub async fn rip_send_request_multicast(sockets: &[SocketPair]) -> io::Result<()> {
         let header = RipHeader {
             command: RIP_CMD_REQUEST,
             version: RIP_2_VERSION,
             padding: 0,
         };
-        let entry = RipEntry {
+        
+        let mut entry = RipEntry {
             routing_family_id: 0,
             route_tag: 0,
             ip_address: 0,
             subnet_mask: 0,
             next_hop: 0,
-            metric: 16u32.to_be(),
+            metric: 16,
         };
+        entry.to_be();
 
         let mut buffer = vec![0; RIP_HEADER_SIZE + RIP_ENTRY_SIZE];
-        buffer[..RIP_HEADER_SIZE].copy_from_slice(as_bytes(&header));
-        buffer[RIP_HEADER_SIZE..].copy_from_slice(as_bytes(&entry));
-        
+        buffer[..RIP_HEADER_SIZE].copy_from_slice(as_bytes::<RipHeader>(&header));
+        buffer[RIP_HEADER_SIZE..].copy_from_slice(as_bytes::<RipEntry>(&entry));
+
         for socket_pair in sockets.iter() {
-            socket_pair.tx.send_multicast(&buffer)?;
+            socket_pair.tx.send_multicast(&buffer).await?;
         }
 
         Ok(())

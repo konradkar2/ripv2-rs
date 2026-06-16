@@ -6,8 +6,8 @@ use std::io;
 use std::str::FromStr;
 
 pub struct RipSocket {
-    socket: s2::Socket,
-    dev: String,
+    socket: tokio::net::UdpSocket,
+    if_name: String,
     if_index: u32,
 }
 
@@ -18,13 +18,13 @@ pub struct SocketPair {
 
 impl SocketPair {
     pub fn create_and_configure(if_name: &str) -> io::Result<SocketPair> {
-        let rx = RipSocket::create(if_name)?;
-        rx.configure_as_multicast_rx()?;
+        let tx = RipSocket::new_tx_socket(if_name)?;
+        let rx = RipSocket::new_rx_socket(if_name)?;
 
-        let tx = RipSocket::create(if_name)?;
-        tx.configure_as_multicast_tx()?;
-
-        Ok(Self { tx, rx })
+        Ok(Self {
+            tx,
+            rx,
+        })
     }
 }
 
@@ -51,56 +51,36 @@ fn ifc_nametoindex(if_name: &str) -> io::Result<u32> {
 }
 
 impl RipSocket {
-    pub fn create(if_name: &str) -> io::Result<Self> {
-        let socket = s2::Socket::new(s2::Domain::IPV4, s2::Type::DGRAM, Some(s2::Protocol::UDP))?;
+
+    pub fn new_rx_socket(if_name: &str) -> io::Result<Self> {
         let if_index = ifc_nametoindex(if_name)?;
+        let socket = create_multicast_rx_socket(if_name, if_index)?;
 
-        let socket = Self {
-            socket,
-            dev: if_name.to_string(),
+        Ok(Self {
+            socket: socket,
+            if_name: if_name.to_string(),
             if_index,
-        };
-        Ok(socket)
+        })
     }
 
-    fn bind_port_and_device(&self) -> io::Result<()> {
-        self.socket.bind_device(Some(self.dev.as_bytes()))?;
-        self.socket.set_reuse_port(true)?;
+    pub fn new_tx_socket(if_name: &str) -> io::Result<Self> {
+        let if_index = ifc_nametoindex(if_name)?;
+        let socket = create_multicast_tx_socket(if_name)?;
 
-        let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RIP_UDP_PORT);
-        let addr = s2::SockAddr::from(addr);
-        self.socket.bind(&addr)?;
-        Ok(())
+        Ok(Self {
+            socket: socket,
+            if_name: if_name.to_string(),
+            if_index,
+        })
     }
 
-    pub fn configure_as_multicast_rx(&self) -> io::Result<()> {
-        self.bind_port_and_device()?;
-        self.socket.set_nonblocking(true)?;
-
-        let ifc_index = s2::InterfaceIndexOrAddress::Index(self.if_index);
-        self.socket.join_multicast_v4_n(
-            &Ipv4Addr::from_str(RIP_MULTICAST_ADDR).ok().unwrap(),
-            &ifc_index,
-        )?;
-
-        Ok(())
-    }
-
-    pub fn configure_as_multicast_tx(&self) -> io::Result<()> {
-        self.bind_port_and_device()?;
-        self.socket.set_multicast_loop_v4(false)?;
-
-        Ok(())
-    }
-
-    pub fn send_multicast(&self, buffer: &[u8]) -> io::Result<()> {
+    pub async fn send_multicast(&self, buffer: &[u8]) -> io::Result<()> {
         let addr = SocketAddrV4::new(
             Ipv4Addr::from_str(RIP_MULTICAST_ADDR).unwrap(),
             RIP_UDP_PORT,
         );
-        let addr = s2::SockAddr::from(addr);
 
-        let sentn = self.socket.send_to(buffer, &addr)?;
+        let sentn = self.socket.send_to(buffer, addr).await?;
         if sentn != buffer.len() {
             return Err(io::Error::new(
                 io::ErrorKind::WriteZero,
@@ -110,4 +90,44 @@ impl RipSocket {
 
         Ok(())
     }
+}
+
+fn into_tokio_socket(socket: s2::Socket) -> io::Result<tokio::net::UdpSocket> {
+    let std_socket: std::net::UdpSocket = socket.into();
+    let socket = tokio::net::UdpSocket::from_std(std_socket)?;
+
+    Ok(socket)
+}
+
+fn bind_port_and_device(socket: &s2::Socket, if_name: &str) -> io::Result<()> {
+    socket.bind_device(Some(if_name.as_bytes()))?;
+    socket.set_reuse_port(true)?;
+
+    let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RIP_UDP_PORT);
+    let addr = s2::SockAddr::from(addr);
+    socket.bind(&addr)?;
+    Ok(())
+}
+
+fn create_multicast_rx_socket(if_name: &str, if_index: u32) -> io::Result<tokio::net::UdpSocket> {
+    let socket = s2::Socket::new(s2::Domain::IPV4, s2::Type::DGRAM, Some(s2::Protocol::UDP))?;
+    bind_port_and_device(&socket, if_name)?;
+    socket.set_nonblocking(true)?;
+
+    let ifc_index = s2::InterfaceIndexOrAddress::Index(if_index);
+    socket.join_multicast_v4_n(
+        &Ipv4Addr::from_str(RIP_MULTICAST_ADDR).ok().unwrap(),
+        &ifc_index,
+    )?;
+
+    into_tokio_socket(socket)
+}
+
+fn create_multicast_tx_socket(if_name: &str) -> io::Result<tokio::net::UdpSocket> {
+    let socket = s2::Socket::new(s2::Domain::IPV4, s2::Type::DGRAM, Some(s2::Protocol::UDP))?;
+    bind_port_and_device(&socket, if_name)?;
+    socket.set_nonblocking(true)?;
+    socket.set_multicast_loop_v4(false)?;
+
+    into_tokio_socket(socket)
 }

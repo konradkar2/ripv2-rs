@@ -22,7 +22,7 @@ async fn run_rip_deamon() -> Result<()> {
     let mut deamon = RipDeamon::new();
     let cfg_path = get_cfg_path()?;
     deamon.setup(cfg_path.as_str())?;
-    deamon.run().await;
+    deamon.run().await?;
     Ok(())
 }
 
