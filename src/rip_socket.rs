@@ -6,7 +6,7 @@ use std::io;
 use std::str::FromStr;
 
 pub struct RipSocket {
-    socket: tokio::net::UdpSocket,
+    pub socket: tokio::net::UdpSocket,
     if_name: String,
     if_index: u32,
 }

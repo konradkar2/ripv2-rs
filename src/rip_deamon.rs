@@ -55,9 +55,19 @@ impl RipDeamon {
         Ok(())
     }
 
+    // fn handle_rx_data(&self, ) {
+    //     for socket_pair in self.sockets.iter() {
+    //         let rx_socket = &socket_pair.rx;
+    //         rx_socket.socket.poll_recv_from(cx, buf)
+
+    //     }
+    // }
 
     pub async fn run(&self) -> common::Result<()> {
     let mut warmup_timer = Some(Box::pin(time::sleep(Duration::from_secs(3))));
+    
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+
 
     loop {
         tokio::select! {
@@ -67,6 +77,10 @@ impl RipDeamon {
                 println!("Warmup timer triggered");
                 RipUpdater::rip_send_request_multicast(&self.sockets).await
                     .map_err(|err| common::Error::IoError(err.to_string()))?;
+            }
+
+            _ = poll_sockets(&self) => {
+
             }
 
             // tutaj odbiór z socketu:
