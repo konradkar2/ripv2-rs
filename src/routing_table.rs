@@ -1,10 +1,7 @@
-pub struct RoutingTable
-{
-
-}
+pub struct RoutingTable {}
 
 impl RoutingTable {
     pub fn new() -> Self {
-        return Self{}
+        return Self {};
     }
 }

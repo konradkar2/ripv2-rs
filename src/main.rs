@@ -7,18 +7,19 @@ mod rip_socket;
 mod routing_table;
 mod rip_updater;
 mod ifc;
-use common::Result;
+use common::RipResult;
 use std::env;
+mod rip_ifc;
 
-fn get_cfg_path() -> Result<String> {
+fn get_cfg_path() -> RipResult<String> {
     let mut args_iter = env::args().into_iter();
     args_iter.next().expect("program name");
-    args_iter.next().ok_or(common::Error::InvalidArgument(
+    args_iter.next().ok_or(common::RipError::InvalidArgument(
         "missing configuration path".to_string(),
     ))
 }
 
-async fn run_rip_deamon() -> Result<()> {
+async fn run_rip_deamon() -> RipResult<()> {
     let mut deamon = RipDeamon::new();
     let cfg_path = get_cfg_path()?;
     deamon.setup(cfg_path.as_str())?;

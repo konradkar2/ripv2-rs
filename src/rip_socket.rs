@@ -7,25 +7,8 @@ use std::str::FromStr;
 
 pub struct RipSocket {
     pub socket: tokio::net::UdpSocket,
-    if_name: String,
-    if_index: u32,
-}
-
-pub struct SocketPair {
-    pub tx: RipSocket,
-    pub rx: RipSocket,
-}
-
-impl SocketPair {
-    pub fn create_and_configure(if_name: &str) -> io::Result<SocketPair> {
-        let tx = RipSocket::new_tx_socket(if_name)?;
-        let rx = RipSocket::new_rx_socket(if_name)?;
-
-        Ok(Self {
-            tx,
-            rx,
-        })
-    }
+    pub if_name: String,
+    pub if_index: u32,
 }
 
 fn ifc_nametoindex(if_name: &str) -> io::Result<u32> {
@@ -51,7 +34,6 @@ fn ifc_nametoindex(if_name: &str) -> io::Result<u32> {
 }
 
 impl RipSocket {
-
     pub fn new_rx_socket(if_name: &str) -> io::Result<Self> {
         let if_index = ifc_nametoindex(if_name)?;
         let socket = create_multicast_rx_socket(if_name, if_index)?;

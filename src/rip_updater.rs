@@ -2,7 +2,7 @@ use std::io::{self};
 
 use crate::common::*;
 use crate::ifc::*;
-use crate::rip_socket::SocketPair;
+use crate::rip_socket::RipSocket;
 use std::{mem::size_of, slice};
 
 fn as_bytes<T>(value: &T) -> &[u8] {
@@ -12,13 +12,13 @@ fn as_bytes<T>(value: &T) -> &[u8] {
 pub struct RipUpdater {}
 
 impl RipUpdater {
-    pub async fn rip_send_request_multicast(sockets: &[SocketPair]) -> io::Result<()> {
+    pub async fn rip_send_request_multicast(socket: &RipSocket) -> io::Result<()> {
         let header = RipHeader {
             command: RIP_CMD_REQUEST,
             version: RIP_2_VERSION,
             padding: 0,
         };
-        
+
         let mut entry = RipEntry {
             routing_family_id: 0,
             route_tag: 0,
@@ -33,9 +33,7 @@ impl RipUpdater {
         buffer[..RIP_HEADER_SIZE].copy_from_slice(as_bytes::<RipHeader>(&header));
         buffer[RIP_HEADER_SIZE..].copy_from_slice(as_bytes::<RipEntry>(&entry));
 
-        for socket_pair in sockets.iter() {
-            socket_pair.tx.send_multicast(&buffer).await?;
-        }
+        socket.send_multicast(&buffer).await?;
 
         Ok(())
     }

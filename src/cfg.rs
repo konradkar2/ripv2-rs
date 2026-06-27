@@ -1,6 +1,6 @@
 use std::fs;
 
-use crate::common::{Error, Result};
+use crate::common::{RipError, RipResult};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -29,16 +29,16 @@ pub struct Cfg {
 
 
 impl RipConfiguration {
-    pub fn parse(content: &str) -> Result<RipConfiguration> {
+    pub fn parse(content: &str) -> RipResult<RipConfiguration> {
         let config: std::result::Result<Cfg, _> = serde_saphyr::from_str(content);
-        let config = config.map_err(|err| { Error::InvalidConfiguration(err.to_string()) })?;
+        let config = config.map_err(|err| { RipError::InvalidConfiguration(err.to_string()) })?;
 
         Ok(config.rip_configuration)
     }
 
-    pub fn read_and_parse(path: &str) -> Result<RipConfiguration> {
+    pub fn read_and_parse(path: &str) -> RipResult<RipConfiguration> {
         let contents = fs::read_to_string(path).map_err(|err| {
-            return Error::InvalidConfiguration(format!("{}: {}", err.to_string(), path));
+            return RipError::InvalidConfiguration(format!("{}: {}", err.to_string(), path));
         })?;
 
         RipConfiguration::parse(contents.as_str())
