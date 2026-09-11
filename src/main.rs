@@ -1,6 +1,8 @@
 use tokio::time::{self, Duration, Instant};
 mod rip_deamon;
 use rip_deamon::RipDeamon;
+use routing_table::RoutingTable;
+use routing_table_rtnetlink::RtNetlinkRoutingTableDriver;
 mod address;
 mod cfg;
 mod result;
@@ -8,6 +10,9 @@ mod rip_packet;
 mod rip_socket;
 mod rip_updater;
 mod routing_table;
+mod routing_table_rtnetlink;
+#[cfg(test)]
+mod routing_table_stub;
 use result::RipResult;
 use std::env;
 mod common;
@@ -24,7 +29,9 @@ fn get_cfg_path() -> RipResult<String> {
 }
 
 async fn run_rip_deamon() -> RipResult<()> {
-    let mut deamon = RipDeamon::new();
+    let routing_driver = RtNetlinkRoutingTableDriver::new().await?;
+    let routing_table = RoutingTable::with_driver(routing_driver);
+    let mut deamon = RipDeamon::with_routing_table(routing_table);
     let cfg_path = get_cfg_path()?;
     deamon.setup(cfg_path.as_str())?;
     deamon.run().await?;

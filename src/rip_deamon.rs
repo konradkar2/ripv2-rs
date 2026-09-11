@@ -8,7 +8,7 @@ use crate::rip_packet::{RipEntry, RipIfInfo, RipPacket, RipPacketData};
 use crate::rip_route::advertised_network_to_local_route;
 use crate::rip_socket::RipSocket;
 use crate::rip_updater::RipUpdater;
-use crate::routing_table::RoutingTable;
+use crate::routing_table::{RoutingTable, RoutingTableDriver};
 use std::future;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -17,8 +17,11 @@ use tokio::time::{self, Duration, Sleep};
 
 const RIP_INFINITY_METRIC: u32 = 16;
 
-pub struct RipDeamon {
-    routing_table: RoutingTable,
+pub struct RipDeamon<Driver>
+where
+    Driver: RoutingTableDriver,
+{
+    routing_table: RoutingTable<Driver>,
     interfaces: Vec<RipIfc>,
     database: RipDatabase,
     updater: RipUpdater,
@@ -103,10 +106,13 @@ fn response_entry_to_route(entry: &RipEntry, packet: &RipPacket) -> Option<RipEn
     Some(route_entry)
 }
 
-impl RipDeamon {
-    pub fn new() -> Self {
+impl<Driver> RipDeamon<Driver>
+where
+    Driver: RoutingTableDriver,
+{
+    pub fn with_routing_table(routing_table: RoutingTable<Driver>) -> Self {
         return Self {
-            routing_table: RoutingTable::new(),
+            routing_table,
             interfaces: vec![],
             database: RipDatabase::new(),
             updater: RipUpdater::new(),
@@ -156,7 +162,7 @@ impl RipDeamon {
                 .await
                 .map_err(|err| result::RipError::IoError(err.to_string()))?;
         } else if packet.is_response() {
-            self.handle_response_packet(&packet)?;
+            self.handle_response_packet(&packet).await?;
         } else {
             return Err(RipError::MalformedPacket());
         }
@@ -164,7 +170,7 @@ impl RipDeamon {
         Ok(())
     }
 
-    fn handle_response_packet(&mut self, packet: &RipPacket) -> result::RipResult<()> {
+    async fn handle_response_packet(&mut self, packet: &RipPacket) -> result::RipResult<()> {
         if packet.data.header.version != RIP_2_VERSION {
             return Err(RipError::MalformedPacket());
         }
@@ -179,13 +185,14 @@ impl RipDeamon {
                 continue;
             };
 
-            self.update_route_from_response(route_entry, packet.if_info.if_index)?;
+            self.update_route_from_response(route_entry, packet.if_info.if_index)
+                .await?;
         }
 
         Ok(())
     }
 
-    fn update_route_from_response(
+    async fn update_route_from_response(
         &mut self,
         route_entry: RipEntry,
         if_index: u32,
@@ -195,15 +202,15 @@ impl RipDeamon {
         match old_route {
             None => {
                 let new_route = self.database.add_remote_route(route_entry, if_index)?;
-                self.routing_table.add_route(&new_route)?;
+                self.routing_table.add_route(&new_route).await?;
             }
             Some(old_route) if old_route.rip_entry.metric > route_entry.metric => {
-                self.routing_table.delete_route(&old_route)?;
+                self.routing_table.delete_route(&old_route).await?;
                 self.database
                     .remove_route(&old_route.rip_entry, old_route.if_index)?;
 
                 let new_route = self.database.add_remote_route(route_entry, if_index)?;
-                self.routing_table.add_route(&new_route)?;
+                self.routing_table.add_route(&new_route).await?;
             }
             Some(_) => {}
         }
@@ -260,6 +267,7 @@ impl RipDeamon {
 mod tests {
     use super::*;
     use crate::result::RIP_CMD_RESPONSE;
+    use crate::routing_table_stub::StubRoutingTableDriver;
     use libc::AF_INET;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
@@ -303,9 +311,13 @@ mod tests {
         route_entry
     }
 
+    fn test_deamon() -> RipDeamon<StubRoutingTableDriver> {
+        RipDeamon::with_routing_table(RoutingTable::with_driver(StubRoutingTableDriver::new()))
+    }
+
     #[tokio::test]
     async fn response_adds_new_route_to_database() {
-        let mut deamon = RipDeamon::new();
+        let mut deamon = test_deamon();
         let if_index = 2;
         let source_addr = Ipv4Addr::new(10, 0, 0, 2);
         let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
@@ -326,11 +338,16 @@ mod tests {
         assert!(route.changed);
         assert!(!route.is_local);
         assert!(route.in_routing_table);
+
+        let routing_driver = deamon.routing_table.driver();
+        assert_eq!(routing_driver.added_routes.len(), 1);
+        assert_eq!(routing_driver.added_routes[0].rip_entry, expected_route);
+        assert!(routing_driver.deleted_routes.is_empty());
     }
 
     #[tokio::test]
     async fn response_replaces_existing_route_when_new_metric_is_better() {
-        let mut deamon = RipDeamon::new();
+        let mut deamon = test_deamon();
         let if_index = 2;
         let source_addr = Ipv4Addr::new(10, 0, 0, 2);
         let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
@@ -355,11 +372,20 @@ mod tests {
             .expect("replaced route");
 
         assert_eq!(route.rip_entry, expected_route);
+
+        let routing_driver = deamon.routing_table.driver();
+        assert_eq!(routing_driver.added_routes.len(), 2);
+        assert_eq!(routing_driver.deleted_routes.len(), 1);
+        assert_eq!(routing_driver.added_routes[1].rip_entry, expected_route);
+        assert_eq!(
+            routing_driver.deleted_routes[0].rip_entry,
+            learned_route_entry(first_entry, source_addr)
+        );
     }
 
     #[tokio::test]
     async fn response_keeps_existing_route_when_new_metric_is_worse() {
-        let mut deamon = RipDeamon::new();
+        let mut deamon = test_deamon();
         let if_index = 2;
         let source_addr = Ipv4Addr::new(10, 0, 0, 2);
         let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
@@ -386,5 +412,9 @@ mod tests {
 
         assert_eq!(route.rip_entry, expected_route);
         assert_ne!(route.rip_entry.metric, ignored_route.metric);
+
+        let routing_driver = deamon.routing_table.driver();
+        assert_eq!(routing_driver.added_routes.len(), 1);
+        assert_eq!(routing_driver.deleted_routes.len(), 0);
     }
 }
