@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
 #   r1 --- r2 --- r3
 #
 #   r1-r2: 10.0.12.0/24
@@ -41,12 +44,12 @@ ip netns exec r3 ip link set r3-r2 up
 
 #R1
 ip netns exec r1 ip link add lan1 type dummy
-ip netns exec r1 ip addr add 10.1.1.0/24 dev lan1
+ip netns exec r1 ip addr add 10.1.1.1/24 dev lan1
 ip netns exec r1 ip link set lan1 up
 
 #R3
 ip netns exec r3 ip link add lan3 type dummy
-ip netns exec r3 ip addr add 10.3.3.0/24 dev lan3
+ip netns exec r3 ip addr add 10.3.3.3/24 dev lan3
 ip netns exec r3 ip link set lan3 up
 
 #enable forwarding ip packets

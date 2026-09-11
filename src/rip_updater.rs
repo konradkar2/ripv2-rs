@@ -78,6 +78,7 @@ impl RipUpdater {
         buffer[..RIP_HEADER_SIZE].copy_from_slice(as_bytes::<RipHeader>(&header));
         buffer[RIP_HEADER_SIZE..].copy_from_slice(as_bytes::<RipEntry>(&entry));
 
+        log::info!("sending RIP request multicast on {}", socket.if_name);
         socket.send_multicast(&buffer).await?;
 
         Ok(())
@@ -92,6 +93,11 @@ impl RipUpdater {
         let changed_only = false;
         let Some(buffer) = build_response_buffer(database, target_if_info.if_index, changed_only)
         else {
+            log::debug!(
+                "no routes to send in unicast response to {} on {}",
+                target,
+                target_if_info.if_name
+            );
             return Ok(());
         };
 
@@ -104,6 +110,12 @@ impl RipUpdater {
             ));
         }
 
+        log::info!(
+            "sent RIP unicast response to {} on {} ({} bytes)",
+            target,
+            target_if_info.if_name,
+            sentn
+        );
         Ok(())
     }
 
@@ -116,9 +128,15 @@ impl RipUpdater {
         for ifc in interfaces {
             let Some(buffer) = build_response_buffer(database, ifc.tx.if_index, changed_only)
             else {
+                log::debug!("no routes to advertise on {}", ifc.if_name);
                 continue;
             };
 
+            log::info!(
+                "sending RIP multicast advertisement on {} ({} bytes)",
+                ifc.if_name,
+                buffer.len()
+            );
             ifc.tx.send_multicast(&buffer).await?;
         }
 

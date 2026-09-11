@@ -83,6 +83,7 @@ fn changed_only_response_buffer_contains_only_changed_routes() {
     );
 
     database.add_local_route(unchanged_entry, 1).unwrap();
+    database.mark_all_routes_as_unchanged();
     database.add_remote_route(changed_entry, 2).unwrap();
 
     let changed_only = true;

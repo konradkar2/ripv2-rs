@@ -29,6 +29,7 @@ impl RtNetlinkRoutingTableDriver {
 
 impl RoutingTableDriver for RtNetlinkRoutingTableDriver {
     async fn add_route(&mut self, route: &RipDbEntry) -> RipResult<()> {
+        log::info!("adding route to kernel: {}", format_route(route));
         let route = build_route_message(route);
         self.handle
             .route()
@@ -39,6 +40,7 @@ impl RoutingTableDriver for RtNetlinkRoutingTableDriver {
     }
 
     async fn delete_route(&mut self, route: &RipDbEntry) -> RipResult<()> {
+        log::info!("deleting route from kernel: {}", format_route(route));
         let route = build_route_message(route);
         self.handle
             .route()
@@ -47,6 +49,19 @@ impl RoutingTableDriver for RtNetlinkRoutingTableDriver {
             .await
             .map_err(|err| RipError::IoError(format!("failed to delete route: {}", err)))
     }
+}
+
+fn format_route(route: &RipDbEntry) -> String {
+    let entry = route.rip_entry;
+
+    format!(
+        "{}/{} via {} if_index {} metric {}",
+        Ipv4Addr::from(entry.ip_address),
+        Ipv4Addr::from(entry.subnet_mask),
+        Ipv4Addr::from(entry.next_hop),
+        route.if_index,
+        entry.metric
+    )
 }
 
 fn build_route_message(route: &RipDbEntry) -> RouteMessage {

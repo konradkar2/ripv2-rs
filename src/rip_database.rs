@@ -53,7 +53,7 @@ impl RipDatabase {
     }
 
     pub fn add_local_route(&mut self, entry: RipEntry, if_index: u32) -> RipResult<()> {
-        let changed = false;
+        let changed = true;
         let is_local = true;
         let in_routing_table = false;
 

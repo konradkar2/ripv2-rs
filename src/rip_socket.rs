@@ -15,6 +15,7 @@ pub struct RipSocket {
 impl RipSocket {
     pub fn new_rx_socket(if_name: &str) -> io::Result<Self> {
         let if_index = ifc_nametoindex(if_name)?;
+        log::debug!("creating RIP RX socket on {} ({})", if_name, if_index);
         let socket = create_multicast_rx_socket(if_name, if_index)?;
 
         Ok(Self {
@@ -26,6 +27,7 @@ impl RipSocket {
 
     pub fn new_tx_socket(if_name: &str) -> io::Result<Self> {
         let if_index = ifc_nametoindex(if_name)?;
+        log::debug!("creating RIP TX socket on {} ({})", if_name, if_index);
         let socket = create_multicast_tx_socket(if_name)?;
 
         Ok(Self {
@@ -49,6 +51,11 @@ impl RipSocket {
             ));
         }
 
+        log::debug!(
+            "sent {} bytes to RIP multicast group on {}",
+            sentn,
+            self.if_name
+        );
         Ok(())
     }
 }

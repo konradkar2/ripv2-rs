@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_PATH="$ROOT_DIR/target/debug/rip_v2"
+RUST_LOG="${RUST_LOG:-info}"
 
 PIDS=()
 
@@ -27,7 +28,7 @@ start_router() {
     local cfg_path="$2"
 
     echo "Starting $namespace with $cfg_path"
-    ip netns exec "$namespace" "$BIN_PATH" "$ROOT_DIR/$cfg_path" &
+    RUST_LOG="$RUST_LOG" ip netns exec "$namespace" "$BIN_PATH" "$ROOT_DIR/$cfg_path" &
     PIDS+=("$!")
 }
 

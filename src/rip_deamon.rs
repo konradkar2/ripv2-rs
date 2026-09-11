@@ -10,7 +10,7 @@ use crate::rip_socket::RipSocket;
 use crate::rip_updater::RipUpdater;
 use crate::routing_table::{RoutingTable, RoutingTableDriver};
 use std::future;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -68,7 +68,7 @@ fn spawn_rx_task(rx_socket: RipSocket, sender: mpsc::Sender<RipPacket>) {
                     let packet = match parse_rx_data(data, source_addr, if_info) {
                         Ok(packet_data) => packet_data,
                         Err(err) => {
-                            eprintln!("RIP receive error on {}: {}", if_name, err.to_string());
+                            log::warn!("RIP receive error on {}: {}", if_name, err.to_string());
                             break;
                         }
                     };
@@ -76,7 +76,7 @@ fn spawn_rx_task(rx_socket: RipSocket, sender: mpsc::Sender<RipPacket>) {
                     let _ = sender.send(packet).await;
                 }
                 Err(error) => {
-                    eprintln!("RIP receive error on {}: {}", if_name, error);
+                    log::warn!("RIP receive error on {}: {}", if_name, error);
                     break;
                 }
             }
@@ -98,6 +98,16 @@ fn update_metric(metric: u32) -> u32 {
     metric.saturating_add(1).min(RIP_INFINITY_METRIC)
 }
 
+fn format_entry(entry: &RipEntry) -> String {
+    format!(
+        "{}/{} via {} metric {}",
+        Ipv4Addr::from(entry.ip_address),
+        Ipv4Addr::from(entry.subnet_mask),
+        Ipv4Addr::from(entry.next_hop),
+        entry.metric
+    )
+}
+
 fn random_millis_in_range(min_millis: u64, max_millis: u64) -> u64 {
     let range_len = max_millis - min_millis + 1;
     let random_seed = SystemTime::now()
@@ -117,7 +127,7 @@ fn create_request_warmup_duration() -> Duration {
 
 fn response_entry_to_route(entry: &RipEntry, packet: &RipPacket) -> Option<RipEntry> {
     if !is_entry_valid(entry) {
-        eprintln!("Invalid RIP response entry: {:?}", entry);
+        log::warn!("invalid RIP response entry: {:?}", entry);
         return None;
     }
 
@@ -145,6 +155,7 @@ where
         for ifc_cfg in cfg.rip_interfaces.iter() {
             let if_name = ifc_cfg.dev.as_str();
 
+            log::info!("configuring RIP interface {}", if_name);
             let rip_inteface = RipIfc::create(if_name)?;
             self.interfaces.push(rip_inteface);
         }
@@ -154,6 +165,11 @@ where
 
     fn setup_advertised_network(&mut self, network: &AdvertisedNetwork) -> RipResult<()> {
         let local_route = advertised_network_to_local_route(network)?;
+        log::info!(
+            "adding local advertised route {} on if_index {}",
+            format_entry(&local_route.entry),
+            local_route.if_index
+        );
         self.database
             .add_local_route(local_route.entry, local_route.if_index)
     }
@@ -179,6 +195,11 @@ where
 
     pub async fn handle_packet(&mut self, packet: RipPacket) -> result::RipResult<()> {
         if packet.is_request() {
+            log::info!(
+                "handling RIP request from {} on {}",
+                packet.source,
+                packet.if_info.if_name
+            );
             self.updater
                 .rip_send_response_unicast(&self.database, &packet.source, &packet.if_info)
                 .await
@@ -198,9 +219,16 @@ where
         }
 
         if packet.source.port() != RIP_UDP_PORT {
-            eprintln!("Ignoring RIP response from non-RIP port: {}", packet.source);
+            log::warn!("ignoring RIP response from non-RIP port: {}", packet.source);
             return Ok(());
         }
+
+        log::info!(
+            "handling RIP response from {} on {} with {} entries",
+            packet.source,
+            packet.if_info.if_name,
+            packet.data.entries.len()
+        );
 
         for entry in packet.data.entries.iter() {
             let Some(route_entry) = response_entry_to_route(entry, packet) else {
@@ -224,9 +252,20 @@ where
         match old_route {
             None => {
                 let new_route = self.database.add_remote_route(route_entry, if_index)?;
+                log::info!(
+                    "learned new remote route {} on if_index {}",
+                    format_entry(&route_entry),
+                    if_index
+                );
                 self.routing_table.add_route(&new_route).await?;
             }
             Some(old_route) if old_route.rip_entry.metric > route_entry.metric => {
+                log::info!(
+                    "replacing route {} with better route {} on if_index {}",
+                    format_entry(&old_route.rip_entry),
+                    format_entry(&route_entry),
+                    if_index
+                );
                 self.routing_table.delete_route(&old_route).await?;
                 self.database
                     .remove_route(&old_route.rip_entry, old_route.if_index)?;
@@ -234,13 +273,23 @@ where
                 let new_route = self.database.add_remote_route(route_entry, if_index)?;
                 self.routing_table.add_route(&new_route).await?;
             }
-            Some(_) => {}
+            Some(old_route) => {
+                log::debug!(
+                    "keeping existing route {}, ignored candidate {}",
+                    format_entry(&old_route.rip_entry),
+                    format_entry(&route_entry)
+                );
+            }
         }
 
         Ok(())
     }
 
     async fn send_multicast_advertisement(&mut self, changed_only: bool) -> result::RipResult<()> {
+        log::info!(
+            "sending multicast advertisement, changed_only={}",
+            changed_only
+        );
         self.updater
             .rip_send_advertisement_multicast(&self.database, &self.interfaces, changed_only)
             .await
@@ -252,6 +301,10 @@ where
     }
 
     async fn send_multicast_request(&self) -> result::RipResult<()> {
+        log::info!(
+            "sending multicast request on {} interfaces",
+            self.interfaces.len()
+        );
         for ifc in &self.interfaces {
             RipUpdater::rip_send_request_multicast(&ifc.tx)
                 .await
@@ -270,6 +323,7 @@ where
         }
 
         let changed_only = true;
+        log::info!("triggered update required");
         self.send_multicast_advertisement(changed_only).await?;
         *triggered_update_lock_timer = Some(Box::pin(time::sleep(Duration::from_secs(
             RIP_TRIGGERED_UPDATE_LOCK_SECS,
@@ -292,7 +346,7 @@ where
                 _ = wait_optional_timer(&mut request_warmup_timer) => {
                     request_warmup_timer = None;
 
-                    println!("Request warmup timer triggered");
+                    log::info!("request warmup timer triggered");
                     self.send_multicast_request().await?;
 
                     Ok(())
@@ -322,8 +376,8 @@ where
                         ));
                     };
 
-                    println!(
-                        "Received packet from {} on {}, with entries count {}",
+                    log::info!(
+                        "received packet from {} on {}, with entries count {}",
                         packet.source,
                         packet.if_info.if_name,
                         packet.data.entries.len()
