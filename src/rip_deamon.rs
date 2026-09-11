@@ -12,10 +12,15 @@ use crate::routing_table::{RoutingTable, RoutingTableDriver};
 use std::future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use tokio::time::{self, Duration, Sleep};
+use tokio::time::{self, Duration, Instant, Sleep};
 
 const RIP_INFINITY_METRIC: u32 = 16;
+const RIP_REQUEST_WARMUP_MIN_MILLIS: u64 = 500;
+const RIP_REQUEST_WARMUP_MAX_MILLIS: u64 = 1000;
+const RIP_UPDATE_INTERVAL_SECS: u64 = 30;
+const RIP_TRIGGERED_UPDATE_LOCK_SECS: u64 = 5;
 
 pub struct RipDeamon<Driver>
 where
@@ -91,6 +96,23 @@ fn is_entry_valid(entry: &RipEntry) -> bool {
 
 fn update_metric(metric: u32) -> u32 {
     metric.saturating_add(1).min(RIP_INFINITY_METRIC)
+}
+
+fn random_millis_in_range(min_millis: u64, max_millis: u64) -> u64 {
+    let range_len = max_millis - min_millis + 1;
+    let random_seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as u64)
+        .unwrap_or_default();
+
+    min_millis + random_seed % range_len
+}
+
+fn create_request_warmup_duration() -> Duration {
+    let warmup_millis =
+        random_millis_in_range(RIP_REQUEST_WARMUP_MIN_MILLIS, RIP_REQUEST_WARMUP_MAX_MILLIS);
+
+    Duration::from_millis(warmup_millis)
 }
 
 fn response_entry_to_route(entry: &RipEntry, packet: &RipPacket) -> Option<RipEntry> {
@@ -218,23 +240,79 @@ where
         Ok(())
     }
 
+    async fn send_multicast_advertisement(&mut self, changed_only: bool) -> result::RipResult<()> {
+        self.updater
+            .rip_send_advertisement_multicast(&self.database, &self.interfaces, changed_only)
+            .await
+            .map_err(|err| result::RipError::IoError(err.to_string()))?;
+
+        self.database.mark_all_routes_as_unchanged();
+
+        Ok(())
+    }
+
+    async fn send_multicast_request(&self) -> result::RipResult<()> {
+        for ifc in &self.interfaces {
+            RipUpdater::rip_send_request_multicast(&ifc.tx)
+                .await
+                .map_err(|err| result::RipError::IoError(err.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    async fn maybe_send_triggered_update(
+        &mut self,
+        triggered_update_lock_timer: &mut Option<Pin<Box<Sleep>>>,
+    ) -> result::RipResult<()> {
+        if triggered_update_lock_timer.is_some() || !self.database.any_route_changed() {
+            return Ok(());
+        }
+
+        let changed_only = true;
+        self.send_multicast_advertisement(changed_only).await?;
+        *triggered_update_lock_timer = Some(Box::pin(time::sleep(Duration::from_secs(
+            RIP_TRIGGERED_UPDATE_LOCK_SECS,
+        ))));
+
+        Ok(())
+    }
+
     pub async fn run(&mut self) -> result::RipResult<()> {
-        let mut warmup_timer = Some(Box::pin(time::sleep(Duration::from_secs(3))));
+        let mut request_warmup_timer =
+            Some(Box::pin(time::sleep(create_request_warmup_duration())));
+        let mut update_timer = Box::pin(time::sleep(Duration::from_secs(RIP_UPDATE_INTERVAL_SECS)));
+        let mut triggered_update_lock_timer: Option<Pin<Box<Sleep>>> = None;
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<RipPacket>(64);
         self.spawn_rx_tasks(tx);
 
         loop {
-            tokio::select! {
-                _ = wait_optional_timer(&mut warmup_timer) => {
-                    warmup_timer = None;
+            let event_result: result::RipResult<()> = tokio::select! {
+                _ = wait_optional_timer(&mut request_warmup_timer) => {
+                    request_warmup_timer = None;
 
-                    println!("Warmup timer triggered");
-                    for ifc in &self.interfaces {
-                        RipUpdater::rip_send_request_multicast(&ifc.tx).await
-                        .map_err(|err| result::RipError::IoError(err.to_string()))?;
-                    }
+                    println!("Request warmup timer triggered");
+                    self.send_multicast_request().await?;
 
+                    Ok(())
+                }
+
+                _ = &mut update_timer => {
+                    let changed_only = false;
+                    self.send_multicast_advertisement(changed_only).await?;
+
+                    update_timer
+                        .as_mut()
+                        .reset(Instant::now() + Duration::from_secs(RIP_UPDATE_INTERVAL_SECS));
+
+                    Ok(())
+                }
+
+                _ = wait_optional_timer(&mut triggered_update_lock_timer) => {
+                    triggered_update_lock_timer = None;
+
+                    Ok(())
                 }
 
                 received = rx.recv() => {
@@ -252,169 +330,23 @@ where
                     );
 
                     self.handle_packet(packet).await?;
+
+                    Ok(())
                 }
 
                 // tutaj odbiór z socketu:
                 // result = self.recv_rip_message() => {
                 //     ...
                 // }
-            }
+            };
+
+            event_result?;
+            self.maybe_send_triggered_update(&mut triggered_update_lock_timer)
+                .await?;
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::result::RIP_CMD_RESPONSE;
-    use crate::routing_table_stub::StubRoutingTableDriver;
-    use libc::AF_INET;
-    use std::net::{Ipv4Addr, SocketAddrV4};
-
-    fn if_info(if_index: u32) -> RipIfInfo {
-        RipIfInfo {
-            if_name: "eth-test".to_string(),
-            if_index,
-        }
-    }
-
-    fn response_entry(metric: u32) -> RipEntry {
-        RipEntry {
-            routing_family_id: AF_INET as u16,
-            route_tag: 0,
-            ip_address: u32::from(Ipv4Addr::new(10, 0, 1, 0)),
-            subnet_mask: u32::from(Ipv4Addr::new(255, 255, 255, 0)),
-            next_hop: 0,
-            metric,
-        }
-    }
-
-    fn response_packet(entry: RipEntry, source: SocketAddrV4, if_index: u32) -> RipPacket {
-        RipPacket {
-            data: RipPacketData {
-                header: crate::rip_packet::RipHeader {
-                    command: RIP_CMD_RESPONSE,
-                    version: RIP_2_VERSION,
-                    padding: 0,
-                },
-                entries: vec![entry],
-            },
-            if_info: if_info(if_index),
-            source,
-        }
-    }
-
-    fn learned_route_entry(entry: RipEntry, source_addr: Ipv4Addr) -> RipEntry {
-        let mut route_entry = entry;
-        route_entry.metric = update_metric(route_entry.metric);
-        route_entry.next_hop = u32::from(source_addr);
-        route_entry
-    }
-
-    fn test_deamon() -> RipDeamon<StubRoutingTableDriver> {
-        RipDeamon::with_routing_table(RoutingTable::with_driver(StubRoutingTableDriver::new()))
-    }
-
-    #[tokio::test]
-    async fn response_adds_new_route_to_database() {
-        let mut deamon = test_deamon();
-        let if_index = 2;
-        let source_addr = Ipv4Addr::new(10, 0, 0, 2);
-        let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
-        let entry = response_entry(1);
-        let expected_route = learned_route_entry(entry, source_addr);
-
-        deamon
-            .handle_packet(response_packet(entry, source, if_index))
-            .await
-            .unwrap();
-
-        let route = deamon
-            .database
-            .get_route(&expected_route, if_index)
-            .expect("learned route");
-
-        assert_eq!(route.rip_entry, expected_route);
-        assert!(route.changed);
-        assert!(!route.is_local);
-        assert!(route.in_routing_table);
-
-        let routing_driver = deamon.routing_table.driver();
-        assert_eq!(routing_driver.added_routes.len(), 1);
-        assert_eq!(routing_driver.added_routes[0].rip_entry, expected_route);
-        assert!(routing_driver.deleted_routes.is_empty());
-    }
-
-    #[tokio::test]
-    async fn response_replaces_existing_route_when_new_metric_is_better() {
-        let mut deamon = test_deamon();
-        let if_index = 2;
-        let source_addr = Ipv4Addr::new(10, 0, 0, 2);
-        let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
-        let first_entry = response_entry(5);
-        let second_entry = response_entry(1);
-        let expected_route = learned_route_entry(second_entry, source_addr);
-
-        deamon
-            .handle_packet(response_packet(first_entry, source, if_index))
-            .await
-            .unwrap();
-        deamon
-            .handle_packet(response_packet(second_entry, source, if_index))
-            .await
-            .unwrap();
-
-        assert_eq!(deamon.database.ok_routes.len(), 1);
-
-        let route = deamon
-            .database
-            .get_route(&expected_route, if_index)
-            .expect("replaced route");
-
-        assert_eq!(route.rip_entry, expected_route);
-
-        let routing_driver = deamon.routing_table.driver();
-        assert_eq!(routing_driver.added_routes.len(), 2);
-        assert_eq!(routing_driver.deleted_routes.len(), 1);
-        assert_eq!(routing_driver.added_routes[1].rip_entry, expected_route);
-        assert_eq!(
-            routing_driver.deleted_routes[0].rip_entry,
-            learned_route_entry(first_entry, source_addr)
-        );
-    }
-
-    #[tokio::test]
-    async fn response_keeps_existing_route_when_new_metric_is_worse() {
-        let mut deamon = test_deamon();
-        let if_index = 2;
-        let source_addr = Ipv4Addr::new(10, 0, 0, 2);
-        let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
-        let first_entry = response_entry(1);
-        let second_entry = response_entry(5);
-        let expected_route = learned_route_entry(first_entry, source_addr);
-        let ignored_route = learned_route_entry(second_entry, source_addr);
-
-        deamon
-            .handle_packet(response_packet(first_entry, source, if_index))
-            .await
-            .unwrap();
-        deamon
-            .handle_packet(response_packet(second_entry, source, if_index))
-            .await
-            .unwrap();
-
-        assert_eq!(deamon.database.ok_routes.len(), 1);
-
-        let route = deamon
-            .database
-            .get_route(&expected_route, if_index)
-            .expect("existing route");
-
-        assert_eq!(route.rip_entry, expected_route);
-        assert_ne!(route.rip_entry.metric, ignored_route.metric);
-
-        let routing_driver = deamon.routing_table.driver();
-        assert_eq!(routing_driver.added_routes.len(), 1);
-        assert_eq!(routing_driver.deleted_routes.len(), 0);
-    }
-}
+#[path = "tests/rip_deamon_tests.rs"]
+mod tests;

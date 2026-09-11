@@ -5,6 +5,7 @@ use socket2 as s2;
 
 use crate::result::*;
 use crate::rip_database::RipDatabase;
+use crate::rip_ifc::RipIfc;
 use crate::rip_packet::*;
 use crate::rip_socket::RipSocket;
 use std::{mem::size_of, slice};
@@ -26,10 +27,13 @@ fn create_unicast_tx_socket(if_name: &str) -> io::Result<tokio::net::UdpSocket> 
     tokio::net::UdpSocket::from_std(std_socket)
 }
 
-fn build_response_buffer(database: &RipDatabase, target_if_index: u32) -> Option<Vec<u8>> {
-    let change_only = false;
+fn build_response_buffer(
+    database: &RipDatabase,
+    target_if_index: u32,
+    changed_only: bool,
+) -> Option<Vec<u8>> {
     let mut entries: Vec<RipEntry> = database
-        .get_routes_for_advertisement(target_if_index, change_only)
+        .get_routes_for_advertisement(target_if_index, changed_only)
         .collect();
 
     if entries.is_empty() {
@@ -85,7 +89,9 @@ impl RipUpdater {
         target: &SocketAddrV4,
         target_if_info: &RipIfInfo,
     ) -> io::Result<()> {
-        let Some(buffer) = build_response_buffer(database, target_if_info.if_index) else {
+        let changed_only = false;
+        let Some(buffer) = build_response_buffer(database, target_if_info.if_index, changed_only)
+        else {
             return Ok(());
         };
 
@@ -100,71 +106,26 @@ impl RipUpdater {
 
         Ok(())
     }
+
+    pub async fn rip_send_advertisement_multicast(
+        &self,
+        database: &RipDatabase,
+        interfaces: &[RipIfc],
+        changed_only: bool,
+    ) -> io::Result<()> {
+        for ifc in interfaces {
+            let Some(buffer) = build_response_buffer(database, ifc.tx.if_index, changed_only)
+            else {
+                continue;
+            };
+
+            ifc.tx.send_multicast(&buffer).await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use libc::AF_INET;
-
-    fn rip_entry(ip_address: Ipv4Addr, subnet_mask: Ipv4Addr, next_hop: Ipv4Addr) -> RipEntry {
-        RipEntry {
-            routing_family_id: AF_INET as u16,
-            route_tag: 0,
-            ip_address: u32::from(ip_address),
-            subnet_mask: u32::from(subnet_mask),
-            next_hop: u32::from(next_hop),
-            metric: 1,
-        }
-    }
-
-    #[test]
-    fn response_buffer_contains_advertised_routes() {
-        let mut database = RipDatabase::new();
-        let target_if_index = 2;
-        let advertised_entry = rip_entry(
-            Ipv4Addr::new(10, 0, 1, 0),
-            Ipv4Addr::new(255, 255, 255, 0),
-            Ipv4Addr::new(10, 0, 0, 1),
-        );
-        let split_horizon_entry = rip_entry(
-            Ipv4Addr::new(10, 0, 2, 0),
-            Ipv4Addr::new(255, 255, 255, 0),
-            Ipv4Addr::UNSPECIFIED,
-        );
-
-        database.add_local_route(advertised_entry, 1).unwrap();
-        database
-            .add_local_route(split_horizon_entry, target_if_index)
-            .unwrap();
-
-        let buffer = build_response_buffer(&database, target_if_index).expect("response buffer");
-        let packet = RipPacketData::from_slice(&buffer).unwrap();
-
-        assert_eq!(packet.header.command, RIP_CMD_RESPONSE);
-        assert_eq!(packet.header.version, RIP_2_VERSION);
-        assert_eq!(packet.entries.len(), 1);
-        assert_eq!(
-            packet.entries[0].routing_family_id,
-            advertised_entry.routing_family_id
-        );
-        assert_eq!(packet.entries[0].ip_address, advertised_entry.ip_address);
-        assert_eq!(packet.entries[0].subnet_mask, advertised_entry.subnet_mask);
-        assert_eq!(packet.entries[0].next_hop, 0);
-        assert_eq!(packet.entries[0].metric, advertised_entry.metric);
-    }
-
-    #[test]
-    fn response_buffer_is_empty_when_no_routes_can_be_advertised() {
-        let mut database = RipDatabase::new();
-        let entry = rip_entry(
-            Ipv4Addr::new(10, 0, 1, 0),
-            Ipv4Addr::new(255, 255, 255, 0),
-            Ipv4Addr::UNSPECIFIED,
-        );
-
-        database.add_local_route(entry, 1).unwrap();
-
-        assert!(build_response_buffer(&database, 1).is_none());
-    }
-}
+#[path = "tests/rip_updater_tests.rs"]
+mod tests;

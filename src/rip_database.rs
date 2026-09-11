@@ -140,6 +140,22 @@ impl RipDatabase {
             })
     }
 
+    pub fn any_route_changed(&self) -> bool {
+        self.any_route_changed
+    }
+
+    pub fn mark_all_routes_as_unchanged(&mut self) {
+        if !self.any_route_changed {
+            return;
+        }
+
+        for route in self.ok_routes.values_mut() {
+            route.changed = false;
+        }
+
+        self.any_route_changed = false;
+    }
+
     fn build_route_key(entry: &RipEntry, if_index: u32) -> RipRouteKey {
         RipRouteKey {
             if_index,
@@ -156,6 +172,4 @@ impl RipDatabase {
     // pub fn all_routes(&self) -> impl Iterator<Item = &RipDbEntry> {
     //     self.ok_routes.values()
     // }
-    // pub fn clear_changed_flags(&mut self);
-    // pub fn any_route_changed(&self) -> bool;
 }
