@@ -1,25 +1,25 @@
 use std::fs;
 
-use crate::common::{RipError, RipResult};
+use crate::result::{RipError, RipResult};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct RipInterface {
-   pub dev: String,
+    pub dev: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AdvertisedNetwork {
-   pub address: String,
-   pub prefix: u32,
-   pub dev: String
+    pub address: String,
+    pub prefix: u32,
+    pub dev: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RipConfiguration {
-  pub version: u32,
-  pub rip_interfaces: Vec<RipInterface>,
-  pub advertised_networks: Vec<AdvertisedNetwork>
+    pub version: u32,
+    pub rip_interfaces: Vec<RipInterface>,
+    pub advertised_networks: Vec<AdvertisedNetwork>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,11 +27,10 @@ pub struct Cfg {
     rip_configuration: RipConfiguration,
 }
 
-
 impl RipConfiguration {
     pub fn parse(content: &str) -> RipResult<RipConfiguration> {
         let config: std::result::Result<Cfg, _> = serde_saphyr::from_str(content);
-        let config = config.map_err(|err| { RipError::InvalidConfiguration(err.to_string()) })?;
+        let config = config.map_err(|err| RipError::InvalidConfiguration(err.to_string()))?;
 
         Ok(config.rip_configuration)
     }
@@ -44,8 +43,3 @@ impl RipConfiguration {
         RipConfiguration::parse(contents.as_str())
     }
 }
-
-
-
-
-

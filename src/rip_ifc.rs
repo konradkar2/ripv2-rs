@@ -1,5 +1,5 @@
-use crate::common::RipError;
-use crate::common::RipResult;
+use crate::result::RipError;
+use crate::result::RipResult;
 use crate::rip_socket::RipSocket;
 use std::io;
 

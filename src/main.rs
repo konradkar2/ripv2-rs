@@ -1,20 +1,24 @@
 use tokio::time::{self, Duration, Instant};
 mod rip_deamon;
 use rip_deamon::RipDeamon;
+mod address;
 mod cfg;
-mod common;
+mod result;
+mod rip_packet;
 mod rip_socket;
-mod routing_table;
 mod rip_updater;
-mod ifc;
-use common::RipResult;
+mod routing_table;
+use result::RipResult;
 use std::env;
+mod common;
+mod rip_database;
 mod rip_ifc;
+mod rip_route;
 
 fn get_cfg_path() -> RipResult<String> {
     let mut args_iter = env::args().into_iter();
     args_iter.next().expect("program name");
-    args_iter.next().ok_or(common::RipError::InvalidArgument(
+    args_iter.next().ok_or(result::RipError::InvalidArgument(
         "missing configuration path".to_string(),
     ))
 }
