@@ -1,6 +1,6 @@
 use std::net::SocketAddrV4;
 
-use crate::result::{RIP_CMD_REQUEST, RipError, RipResult};
+use crate::result::{RIP_CMD_REQUEST, RIP_CMD_RESPONSE, RipError, RipResult};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -48,6 +48,10 @@ impl RipPacket {
     pub fn is_request(&self) -> bool {
         return self.data.is_request();
     }
+
+    pub fn is_response(&self) -> bool {
+        return self.data.is_response();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +84,10 @@ impl RipPacketData {
         return self.header.command == RIP_CMD_REQUEST
             && self.entries.len() == 1
             && self.entries[0] == RIP_ENTRY_REQUEST;
+    }
+
+    pub fn is_response(&self) -> bool {
+        return self.header.command == RIP_CMD_RESPONSE;
     }
 }
 

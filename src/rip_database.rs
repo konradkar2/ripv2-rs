@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt;
 use std::net::Ipv4Addr;
-use std::time::Instant;
 
 use crate::result::{RipError, RipResult};
 use crate::rip_packet::RipEntry;
@@ -54,33 +53,70 @@ impl RipDatabase {
     }
 
     pub fn add_local_route(&mut self, entry: RipEntry, if_index: u32) -> RipResult<()> {
-        let key = RipRouteKey {
-            if_index,
-            ip_address: entry.ip_address,
-            subnet_mask: entry.subnet_mask,
-            next_hop: entry.next_hop,
-        };
+        let changed = false;
+        let is_local = true;
+        let in_routing_table = false;
+
+        self.add_route(entry, if_index, changed, is_local, in_routing_table)
+            .map(|_| ())
+    }
+
+    pub fn get_route(&self, entry: &RipEntry, if_index: u32) -> Option<&RipDbEntry> {
+        let key = Self::build_route_key(entry, if_index);
+        self.ok_routes.get(&key)
+    }
+
+    pub fn add_remote_route(&mut self, entry: RipEntry, if_index: u32) -> RipResult<RipDbEntry> {
+        let changed = true;
+        let is_local = false;
+        let in_routing_table = true;
+
+        self.add_route(entry, if_index, changed, is_local, in_routing_table)
+    }
+
+    fn add_route(
+        &mut self,
+        entry: RipEntry,
+        if_index: u32,
+        changed: bool,
+        is_local: bool,
+        in_routing_table: bool,
+    ) -> RipResult<RipDbEntry> {
+        let key = Self::build_route_key(&entry, if_index);
 
         let value = RipDbEntry {
             rip_entry: entry,
             if_index,
-            changed: false,
-            is_local: true,
-            in_routing_table: false,
+            changed,
+            is_local,
+            in_routing_table,
             timeout_cnt: 0,
         };
 
         match self.ok_routes.entry(key) {
             Entry::Vacant(entry) => {
-                println!("Adding local route: {}", key);
-                entry.insert(value);
-                Ok(())
+                entry.insert(value.clone());
+                if value.changed {
+                    self.any_route_changed = true;
+                }
+                Ok(value)
             }
             Entry::Occupied(_) => Err(RipError::InvalidConfiguration(format!(
                 "route already exists in RIP database: {}",
                 key
             ))),
         }
+    }
+
+    pub fn remove_route(&mut self, entry: &RipEntry, if_index: u32) -> RipResult<RipDbEntry> {
+        let key = Self::build_route_key(entry, if_index);
+
+        self.ok_routes
+            .remove(&key)
+            .ok_or(RipError::InvalidConfiguration(format!(
+                "route does not exist in RIP database: {}",
+                key
+            )))
     }
 
     pub fn get_routes_for_advertisement(
@@ -102,6 +138,15 @@ impl RipDatabase {
                 entry.next_hop = 0;
                 entry
             })
+    }
+
+    fn build_route_key(entry: &RipEntry, if_index: u32) -> RipRouteKey {
+        RipRouteKey {
+            if_index,
+            ip_address: entry.ip_address,
+            subnet_mask: entry.subnet_mask,
+            next_hop: entry.next_hop,
+        }
     }
 
     //pub fn update_from_rip(&mut self, entry: RipEntry, if_index: u32) -> bool;

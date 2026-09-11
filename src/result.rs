@@ -1,6 +1,3 @@
-use crate::rip_packet::RipPacket;
-use std::net::SocketAddr;
-
 pub const RIP_CMD_REQUEST: u8 = 1;
 pub const RIP_CMD_RESPONSE: u8 = 2;
 pub const RIP_2_VERSION: u8 = 2;
