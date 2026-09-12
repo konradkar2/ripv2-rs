@@ -21,7 +21,8 @@ use tokio::time::{self, Duration, Instant, Sleep};
 const RIP_INFINITY_METRIC: u32 = 16;
 const RIP_REQUEST_WARMUP_MIN_MILLIS: u64 = 500;
 const RIP_REQUEST_WARMUP_MAX_MILLIS: u64 = 1000;
-const RIP_UPDATE_INTERVAL_SECS: u64 = 30;
+const RIP_UPDATE_MIN_MILLIS: u64 = 27500;
+const RIP_UPDATE_MAX_MILLIS: u64 = 35000;
 const RIP_TRIGGERED_UPDATE_LOCK_MIN_MILLIS: u64 = 1000;
 const RIP_TRIGGERED_UPDATE_LOCK_MAX_MILLIS: u64 = 5000;
 const RIP_TIMEOUT_CHECK_INTERVAL_SECS: u64 = 15;
@@ -137,6 +138,12 @@ fn create_request_warmup_duration() -> Duration {
         random_millis_in_range(RIP_REQUEST_WARMUP_MIN_MILLIS, RIP_REQUEST_WARMUP_MAX_MILLIS);
 
     Duration::from_millis(warmup_millis)
+}
+
+fn create_update_duration() -> Duration {
+    let update_millis = random_millis_in_range(RIP_UPDATE_MIN_MILLIS, RIP_UPDATE_MAX_MILLIS);
+
+    Duration::from_millis(update_millis)
 }
 
 fn create_triggered_update_lock_duration() -> Duration {
@@ -519,7 +526,7 @@ where
     pub async fn run(&mut self) -> result::RipResult<()> {
         let mut request_warmup_timer =
             Some(Box::pin(time::sleep(create_request_warmup_duration())));
-        let mut update_timer = Box::pin(time::sleep(Duration::from_secs(RIP_UPDATE_INTERVAL_SECS)));
+        let mut update_timer = Box::pin(time::sleep(create_update_duration()));
         let mut triggered_update_lock_timer: Option<Pin<Box<Sleep>>> = None;
         let mut timeout_timer = Box::pin(time::sleep(Duration::from_secs(
             timeout_check_interval_secs(),
@@ -559,7 +566,7 @@ where
 
                     update_timer
                         .as_mut()
-                        .reset(Instant::now() + Duration::from_secs(RIP_UPDATE_INTERVAL_SECS));
+                        .reset(Instant::now() + create_update_duration());
 
                     Ok(())
                 }

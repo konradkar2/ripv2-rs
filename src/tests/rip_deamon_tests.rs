@@ -58,6 +58,15 @@ fn request_warmup_duration_uses_startup_jitter_range() {
 }
 
 #[test]
+fn update_duration_uses_update_jitter_range() {
+    let update_duration = create_update_duration();
+    let update_millis = update_duration.as_millis() as u64;
+
+    assert!(update_millis >= RIP_UPDATE_MIN_MILLIS);
+    assert!(update_millis <= RIP_UPDATE_MAX_MILLIS);
+}
+
+#[test]
 fn triggered_update_lock_duration_uses_jitter_range() {
     let lock_duration = create_triggered_update_lock_duration();
     let lock_millis = lock_duration.as_millis() as u64;
