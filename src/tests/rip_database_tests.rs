@@ -28,7 +28,7 @@ fn timed_out_route_moves_to_garbage_and_is_advertised_as_changed() {
 
     let garbage_started_at = Instant::now();
     let garbage_route = database
-        .move_route_to_garbage(&entry, if_index, garbage_started_at)
+        .move_route_to_garbage(&entry, garbage_started_at)
         .unwrap();
 
     assert!(database.ok_routes.is_empty());
@@ -49,6 +49,32 @@ fn timed_out_route_moves_to_garbage_and_is_advertised_as_changed() {
 }
 
 #[test]
+fn route_key_identifies_destination_not_next_hop() {
+    let mut database = RipDatabase::new();
+    let first_if_index = 2;
+    let second_if_index = 3;
+    let first_entry = rip_entry(Ipv4Addr::new(10, 0, 1, 0), Ipv4Addr::new(10, 0, 0, 1));
+    let second_entry = rip_entry(Ipv4Addr::new(10, 0, 1, 0), Ipv4Addr::new(10, 0, 0, 2));
+
+    let added_route = database
+        .add_remote_route(first_entry, first_if_index)
+        .unwrap();
+    let duplicate_result = database.add_remote_route(second_entry, second_if_index);
+
+    assert!(duplicate_result.is_err());
+    assert_eq!(database.ok_routes.len(), 1);
+    assert_eq!(added_route.rip_entry.next_hop, first_entry.next_hop);
+    assert_eq!(added_route.if_index, first_if_index);
+
+    let route = database
+        .get_route(&second_entry)
+        .expect("route by destination");
+
+    assert_eq!(route.rip_entry.next_hop, first_entry.next_hop);
+    assert_eq!(route.if_index, first_if_index);
+}
+
+#[test]
 fn garbage_collection_removes_expired_garbage_routes() {
     let mut database = RipDatabase::new();
     let if_index = 2;
@@ -56,7 +82,7 @@ fn garbage_collection_removes_expired_garbage_routes() {
 
     database.add_remote_route(entry, if_index).unwrap();
     database
-        .move_route_to_garbage(&entry, if_index, Instant::now())
+        .move_route_to_garbage(&entry, Instant::now())
         .unwrap();
 
     let now = Instant::now() + Duration::from_secs(121);

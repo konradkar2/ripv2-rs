@@ -9,21 +9,17 @@ use crate::rip_packet::RipEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RipRouteKey {
-    pub if_index: u32,
     pub ip_address: u32,
     pub subnet_mask: u32,
-    pub next_hop: u32,
 }
 
 impl fmt::Display for RipRouteKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "if_index={}, ip_address={}, subnet_mask={}, next_hop={}",
-            self.if_index,
+            "ip_address={}, subnet_mask={}",
             Ipv4Addr::from(self.ip_address),
             Ipv4Addr::from(self.subnet_mask),
-            Ipv4Addr::from(self.next_hop),
         )
     }
 }
@@ -64,8 +60,8 @@ impl RipDatabase {
             .map(|_| ())
     }
 
-    pub fn get_route(&self, entry: &RipEntry, if_index: u32) -> Option<&RipDbEntry> {
-        let key = Self::build_route_key(entry, if_index);
+    pub fn get_route(&self, entry: &RipEntry) -> Option<&RipDbEntry> {
+        let key = Self::build_route_key(entry);
         self.ok_routes.get(&key)
     }
 
@@ -85,7 +81,7 @@ impl RipDatabase {
         is_local: bool,
         in_routing_table: bool,
     ) -> RipResult<RipDbEntry> {
-        let key = Self::build_route_key(&entry, if_index);
+        let key = Self::build_route_key(&entry);
 
         let value = RipDbEntry {
             rip_entry: entry,
@@ -112,8 +108,8 @@ impl RipDatabase {
         }
     }
 
-    pub fn remove_route(&mut self, entry: &RipEntry, if_index: u32) -> RipResult<RipDbEntry> {
-        let key = Self::build_route_key(entry, if_index);
+    pub fn remove_route(&mut self, entry: &RipEntry) -> RipResult<RipDbEntry> {
+        let key = Self::build_route_key(entry);
 
         if let Some(route) = self.ok_routes.remove(&key) {
             return Ok(route);
@@ -127,18 +123,18 @@ impl RipDatabase {
             )))
     }
 
-    pub fn remove_garbage_route(&mut self, entry: &RipEntry, if_index: u32) -> Option<RipDbEntry> {
-        let key = Self::build_route_key(entry, if_index);
+    pub fn remove_garbage_route(&mut self, entry: &RipEntry) -> Option<RipDbEntry> {
+        let key = Self::build_route_key(entry);
         self.garbage_routes.remove(&key)
     }
 
-    pub fn has_garbage_route(&self, entry: &RipEntry, if_index: u32) -> bool {
-        let key = Self::build_route_key(entry, if_index);
+    pub fn has_garbage_route(&self, entry: &RipEntry) -> bool {
+        let key = Self::build_route_key(entry);
         self.garbage_routes.contains_key(&key)
     }
 
-    pub fn refresh_route_timeout(&mut self, entry: &RipEntry, if_index: u32) {
-        let key = Self::build_route_key(entry, if_index);
+    pub fn refresh_route_timeout(&mut self, entry: &RipEntry) {
+        let key = Self::build_route_key(entry);
         if let Some(route) = self.ok_routes.get_mut(&key) {
             route.timeout_cnt = 0;
         }
@@ -169,10 +165,9 @@ impl RipDatabase {
     pub fn move_route_to_garbage(
         &mut self,
         entry: &RipEntry,
-        if_index: u32,
         garbage_started_at: Instant,
     ) -> RipResult<RipDbEntry> {
-        let key = Self::build_route_key(entry, if_index);
+        let key = Self::build_route_key(entry);
         let mut route = self
             .ok_routes
             .remove(&key)
@@ -294,12 +289,10 @@ impl RipDatabase {
         self.any_route_changed = false;
     }
 
-    fn build_route_key(entry: &RipEntry, if_index: u32) -> RipRouteKey {
+    fn build_route_key(entry: &RipEntry) -> RipRouteKey {
         RipRouteKey {
-            if_index,
             ip_address: entry.ip_address,
             subnet_mask: entry.subnet_mask,
-            next_hop: entry.next_hop,
         }
     }
 }

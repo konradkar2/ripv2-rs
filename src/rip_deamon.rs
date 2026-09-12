@@ -308,18 +308,15 @@ where
             if_index
         );
 
-        let old_route = self.database.get_route(&route_entry, if_index).cloned();
+        let old_route = self.database.get_route(&route_entry).cloned();
         if let Some(old_route) = old_route {
             self.routing_table.delete_route(&old_route).await?;
-            self.database.move_route_to_garbage(
-                &old_route.rip_entry,
-                old_route.if_index,
-                std::time::Instant::now(),
-            )?;
+            self.database
+                .move_route_to_garbage(&old_route.rip_entry, std::time::Instant::now())?;
             return Ok(());
         }
 
-        if self.database.has_garbage_route(&route_entry, if_index) {
+        if self.database.has_garbage_route(&route_entry) {
             log::debug!(
                 "poisoned route {} is already in garbage on if_index {}",
                 format_entry(&route_entry),
@@ -347,11 +344,11 @@ where
                 .await;
         }
 
-        let old_route = self.database.get_route(&route_entry, if_index).cloned();
+        let old_route = self.database.get_route(&route_entry).cloned();
 
         match old_route {
             None => {
-                self.database.remove_garbage_route(&route_entry, if_index);
+                self.database.remove_garbage_route(&route_entry);
                 let new_route = self.database.add_remote_route(route_entry, if_index)?;
                 log::info!(
                     "learned new remote route {} on if_index {}",
@@ -368,14 +365,13 @@ where
                     if_index
                 );
                 self.routing_table.delete_route(&old_route).await?;
-                self.database
-                    .remove_route(&old_route.rip_entry, old_route.if_index)?;
+                self.database.remove_route(&old_route.rip_entry)?;
 
                 let new_route = self.database.add_remote_route(route_entry, if_index)?;
                 self.routing_table.add_route(&new_route).await?;
             }
             Some(old_route) => {
-                self.database.refresh_route_timeout(&route_entry, if_index);
+                self.database.refresh_route_timeout(&route_entry);
                 log::debug!(
                     "keeping existing route {}, ignored candidate {}",
                     format_entry(&old_route.rip_entry),
@@ -453,11 +449,8 @@ where
                 route.if_index
             );
             self.routing_table.delete_route(&route).await?;
-            self.database.move_route_to_garbage(
-                &route.rip_entry,
-                route.if_index,
-                std::time::Instant::now(),
-            )?;
+            self.database
+                .move_route_to_garbage(&route.rip_entry, std::time::Instant::now())?;
         }
 
         if should_start_garbage_collection {

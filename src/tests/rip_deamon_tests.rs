@@ -91,7 +91,7 @@ async fn response_adds_new_route_to_database() {
 
     let route = deamon
         .database
-        .get_route(&expected_route, if_index)
+        .get_route(&expected_route)
         .expect("learned route");
 
     assert_eq!(route.rip_entry, expected_route);
@@ -164,7 +164,7 @@ async fn shutdown_poisons_routes_and_deletes_kernel_routes() {
 
     let route = deamon
         .database
-        .get_route(&expected_route, if_index)
+        .get_route(&expected_route)
         .expect("poisoned route");
 
     assert_eq!(route.rip_entry.metric, RIP_INFINITY_METRIC);
@@ -252,7 +252,7 @@ async fn response_replaces_existing_route_when_new_metric_is_better() {
 
     let route = deamon
         .database
-        .get_route(&expected_route, if_index)
+        .get_route(&expected_route)
         .expect("replaced route");
 
     assert_eq!(route.rip_entry, expected_route);
@@ -291,7 +291,7 @@ async fn response_keeps_existing_route_when_new_metric_is_worse() {
 
     let route = deamon
         .database
-        .get_route(&expected_route, if_index)
+        .get_route(&expected_route)
         .expect("existing route");
 
     assert_eq!(route.rip_entry, expected_route);
