@@ -21,9 +21,9 @@ run_as_project_user() {
     if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
         local user_home
         user_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
-        sudo -u "$SUDO_USER" HOME="$user_home" bash -lc "$*"
+        sudo -u "$SUDO_USER" HOME="$user_home" bash -lc "export PATH='$user_home/.cargo/bin':\"\$PATH\"; $*"
     else
-        bash -lc "$*"
+        bash -lc "export PATH='${HOME:-}/.cargo/bin':\"\$PATH\"; $*"
     fi
 }
 
