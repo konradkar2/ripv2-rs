@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if ((EUID != 0)); then
-    echo "cleanup_env.sh must be run as root, for example: sudo ./cleanup_env.sh" >&2
+    echo "cleanup_env.sh must be run as root, for example: sudo ./tests/integration/cleanup_env.sh" >&2
     exit 1
 fi
 

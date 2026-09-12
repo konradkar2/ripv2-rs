@@ -57,6 +57,15 @@ fn request_warmup_duration_uses_startup_jitter_range() {
     assert!(warmup_millis <= RIP_REQUEST_WARMUP_MAX_MILLIS);
 }
 
+#[test]
+fn triggered_update_lock_duration_uses_jitter_range() {
+    let lock_duration = create_triggered_update_lock_duration();
+    let lock_millis = lock_duration.as_millis() as u64;
+
+    assert!(lock_millis >= RIP_TRIGGERED_UPDATE_LOCK_MIN_MILLIS);
+    assert!(lock_millis <= RIP_TRIGGERED_UPDATE_LOCK_MAX_MILLIS);
+}
+
 #[tokio::test]
 async fn response_adds_new_route_to_database() {
     let mut deamon = test_deamon();
@@ -84,6 +93,130 @@ async fn response_adds_new_route_to_database() {
     let routing_driver = deamon.routing_table.driver();
     assert_eq!(routing_driver.added_routes.len(), 1);
     assert_eq!(routing_driver.added_routes[0].rip_entry, expected_route);
+    assert!(routing_driver.deleted_routes.is_empty());
+}
+
+#[tokio::test]
+async fn route_timeout_deletes_route_and_moves_it_to_garbage() {
+    let mut deamon = test_deamon();
+    let if_index = 2;
+    let source_addr = Ipv4Addr::new(10, 0, 0, 2);
+    let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
+    let entry = response_entry(1);
+    let expected_route = learned_route_entry(entry, source_addr);
+
+    deamon
+        .handle_packet(response_packet(entry, source, if_index))
+        .await
+        .unwrap();
+
+    let mut garbage_collection_timer = None;
+    let timeout_ticks = RIP_ROUTE_TIMEOUT_SECS / RIP_TIMEOUT_CHECK_INTERVAL_SECS;
+    for _ in 0..timeout_ticks {
+        deamon
+            .handle_route_timeout_tick(&mut garbage_collection_timer)
+            .await
+            .unwrap();
+    }
+
+    assert!(deamon.database.ok_routes.is_empty());
+    assert_eq!(deamon.database.garbage_routes.len(), 1);
+    assert!(deamon.database.any_route_changed());
+    assert!(garbage_collection_timer.is_some());
+
+    let garbage_route = deamon.database.garbage_routes.values().next().unwrap();
+    assert_eq!(
+        garbage_route.rip_entry.ip_address,
+        expected_route.ip_address
+    );
+    assert_eq!(garbage_route.rip_entry.metric, RIP_INFINITY_METRIC);
+    assert!(garbage_route.changed);
+    assert!(!garbage_route.in_routing_table);
+
+    let routing_driver = deamon.routing_table.driver();
+    assert_eq!(routing_driver.deleted_routes.len(), 1);
+    assert_eq!(routing_driver.deleted_routes[0].rip_entry, expected_route);
+}
+
+#[tokio::test]
+async fn shutdown_poisons_routes_and_deletes_kernel_routes() {
+    let mut deamon = test_deamon();
+    let if_index = 2;
+    let source_addr = Ipv4Addr::new(10, 0, 0, 2);
+    let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
+    let entry = response_entry(1);
+    let expected_route = learned_route_entry(entry, source_addr);
+
+    deamon
+        .handle_packet(response_packet(entry, source, if_index))
+        .await
+        .unwrap();
+    deamon.handle_shutdown().await;
+
+    let route = deamon
+        .database
+        .get_route(&expected_route, if_index)
+        .expect("poisoned route");
+
+    assert_eq!(route.rip_entry.metric, RIP_INFINITY_METRIC);
+
+    let routing_driver = deamon.routing_table.driver();
+    assert_eq!(routing_driver.deleted_routes.len(), 1);
+    assert_eq!(routing_driver.deleted_routes[0].rip_entry, expected_route);
+}
+
+#[tokio::test]
+async fn poisoned_response_removes_existing_route_and_moves_it_to_garbage() {
+    let mut deamon = test_deamon();
+    let if_index = 2;
+    let source_addr = Ipv4Addr::new(10, 0, 0, 2);
+    let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
+    let reachable_entry = response_entry(1);
+    let poisoned_entry = response_entry(RIP_INFINITY_METRIC);
+    let expected_route = learned_route_entry(reachable_entry, source_addr);
+
+    deamon
+        .handle_packet(response_packet(reachable_entry, source, if_index))
+        .await
+        .unwrap();
+    deamon
+        .handle_packet(response_packet(poisoned_entry, source, if_index))
+        .await
+        .unwrap();
+
+    assert!(deamon.database.ok_routes.is_empty());
+    assert_eq!(deamon.database.garbage_routes.len(), 1);
+
+    let garbage_route = deamon.database.garbage_routes.values().next().unwrap();
+    assert_eq!(
+        garbage_route.rip_entry.ip_address,
+        expected_route.ip_address
+    );
+    assert_eq!(garbage_route.rip_entry.metric, RIP_INFINITY_METRIC);
+
+    let routing_driver = deamon.routing_table.driver();
+    assert_eq!(routing_driver.deleted_routes.len(), 1);
+    assert_eq!(routing_driver.deleted_routes[0].rip_entry, expected_route);
+}
+
+#[tokio::test]
+async fn poisoned_response_for_unknown_route_is_ignored() {
+    let mut deamon = test_deamon();
+    let if_index = 2;
+    let source_addr = Ipv4Addr::new(10, 0, 0, 2);
+    let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
+    let poisoned_entry = response_entry(RIP_INFINITY_METRIC);
+
+    deamon
+        .handle_packet(response_packet(poisoned_entry, source, if_index))
+        .await
+        .unwrap();
+
+    assert!(deamon.database.ok_routes.is_empty());
+    assert!(deamon.database.garbage_routes.is_empty());
+
+    let routing_driver = deamon.routing_table.driver();
+    assert!(routing_driver.added_routes.is_empty());
     assert!(routing_driver.deleted_routes.is_empty());
 }
 

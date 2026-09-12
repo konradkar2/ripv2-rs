@@ -18,6 +18,7 @@ fn route_entry() -> RipDbEntry {
         is_local: false,
         in_routing_table: true,
         timeout_cnt: 0,
+        garbage_started_at: None,
     }
 }
 

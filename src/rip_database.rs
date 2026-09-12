@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt;
 use std::net::Ipv4Addr;
+use std::time::{Duration, Instant};
 
 use crate::result::{RipError, RipResult};
 use crate::rip_packet::RipEntry;
@@ -35,12 +36,13 @@ pub struct RipDbEntry {
     pub changed: bool,
     pub is_local: bool,
     pub in_routing_table: bool,
-    pub timeout_cnt: u16,
+    pub timeout_cnt: u64,
+    pub garbage_started_at: Option<Instant>,
 }
 
 pub struct RipDatabase {
     pub ok_routes: HashMap<RipRouteKey, RipDbEntry>,
-    //garbage_routes: HashMap<RipRouteKey, RipRouteDescription>,
+    pub garbage_routes: HashMap<RipRouteKey, RipDbEntry>,
     any_route_changed: bool,
 }
 
@@ -48,6 +50,7 @@ impl RipDatabase {
     pub fn new() -> Self {
         return Self {
             ok_routes: HashMap::new(),
+            garbage_routes: HashMap::new(),
             any_route_changed: false,
         };
     }
@@ -91,6 +94,7 @@ impl RipDatabase {
             is_local,
             in_routing_table,
             timeout_cnt: 0,
+            garbage_started_at: None,
         };
 
         match self.ok_routes.entry(key) {
@@ -111,12 +115,142 @@ impl RipDatabase {
     pub fn remove_route(&mut self, entry: &RipEntry, if_index: u32) -> RipResult<RipDbEntry> {
         let key = Self::build_route_key(entry, if_index);
 
-        self.ok_routes
+        if let Some(route) = self.ok_routes.remove(&key) {
+            return Ok(route);
+        }
+
+        self.garbage_routes
             .remove(&key)
             .ok_or(RipError::InvalidConfiguration(format!(
                 "route does not exist in RIP database: {}",
                 key
             )))
+    }
+
+    pub fn remove_garbage_route(&mut self, entry: &RipEntry, if_index: u32) -> Option<RipDbEntry> {
+        let key = Self::build_route_key(entry, if_index);
+        self.garbage_routes.remove(&key)
+    }
+
+    pub fn has_garbage_route(&self, entry: &RipEntry, if_index: u32) -> bool {
+        let key = Self::build_route_key(entry, if_index);
+        self.garbage_routes.contains_key(&key)
+    }
+
+    pub fn refresh_route_timeout(&mut self, entry: &RipEntry, if_index: u32) {
+        let key = Self::build_route_key(entry, if_index);
+        if let Some(route) = self.ok_routes.get_mut(&key) {
+            route.timeout_cnt = 0;
+        }
+    }
+
+    pub fn collect_timed_out_routes(
+        &mut self,
+        timeout_increment_secs: u64,
+        timeout_limit_secs: u64,
+    ) -> Vec<RipDbEntry> {
+        self.ok_routes
+            .values_mut()
+            .filter_map(|route| {
+                if route.is_local {
+                    return None;
+                }
+
+                route.timeout_cnt = route.timeout_cnt.saturating_add(timeout_increment_secs);
+                if route.timeout_cnt >= timeout_limit_secs {
+                    return Some(route.clone());
+                }
+
+                None
+            })
+            .collect()
+    }
+
+    pub fn move_route_to_garbage(
+        &mut self,
+        entry: &RipEntry,
+        if_index: u32,
+        garbage_started_at: Instant,
+    ) -> RipResult<RipDbEntry> {
+        let key = Self::build_route_key(entry, if_index);
+        let mut route = self
+            .ok_routes
+            .remove(&key)
+            .ok_or(RipError::InvalidConfiguration(format!(
+                "route does not exist in RIP database: {}",
+                key
+            )))?;
+
+        route.changed = true;
+        route.rip_entry.metric = 16;
+        route.in_routing_table = false;
+        route.garbage_started_at = Some(garbage_started_at);
+        self.any_route_changed = true;
+
+        match self.garbage_routes.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(route.clone());
+                Ok(route)
+            }
+            Entry::Occupied(_) => Err(RipError::InvalidConfiguration(format!(
+                "route already exists in RIP garbage database: {}",
+                key
+            ))),
+        }
+    }
+
+    pub fn remove_expired_garbage_routes(
+        &mut self,
+        now: Instant,
+        garbage_lifetime: Duration,
+    ) -> Vec<RipDbEntry> {
+        let expired_keys: Vec<RipRouteKey> = self
+            .garbage_routes
+            .iter()
+            .filter_map(|(key, route)| {
+                let garbage_started_at = route.garbage_started_at?;
+                if now.duration_since(garbage_started_at) >= garbage_lifetime {
+                    return Some(*key);
+                }
+
+                None
+            })
+            .collect();
+
+        expired_keys
+            .into_iter()
+            .filter_map(|key| self.garbage_routes.remove(&key))
+            .collect()
+    }
+
+    pub fn has_garbage_routes(&self) -> bool {
+        !self.garbage_routes.is_empty()
+    }
+
+    pub fn poison_all_routes(&mut self) {
+        if self.ok_routes.is_empty() && self.garbage_routes.is_empty() {
+            return;
+        }
+
+        for route in self
+            .ok_routes
+            .values_mut()
+            .chain(self.garbage_routes.values_mut())
+        {
+            route.rip_entry.metric = 16;
+            route.changed = true;
+        }
+
+        self.any_route_changed = true;
+    }
+
+    pub fn get_routes_in_routing_table(&self) -> Vec<RipDbEntry> {
+        self.ok_routes
+            .values()
+            .chain(self.garbage_routes.values())
+            .filter(|route| route.in_routing_table)
+            .cloned()
+            .collect()
     }
 
     pub fn get_routes_for_advertisement(
@@ -126,6 +260,7 @@ impl RipDatabase {
     ) -> impl Iterator<Item = RipEntry> + '_ {
         self.ok_routes
             .values()
+            .chain(self.garbage_routes.values())
             .filter(move |route| {
                 if changed_only && !route.changed {
                     return false;
@@ -152,6 +287,9 @@ impl RipDatabase {
         for route in self.ok_routes.values_mut() {
             route.changed = false;
         }
+        for route in self.garbage_routes.values_mut() {
+            route.changed = false;
+        }
 
         self.any_route_changed = false;
     }
@@ -164,12 +302,8 @@ impl RipDatabase {
             next_hop: entry.next_hop,
         }
     }
-
-    //pub fn update_from_rip(&mut self, entry: RipEntry, if_index: u32) -> bool;
-    //pub fn mark_timeout_routes(&mut self);
-    // pub fn collect_garbage(&mut self);
-    // pub fn changed_routes(&self) -> impl Iterator<Item = &RipRouteDescription>;
-    // pub fn all_routes(&self) -> impl Iterator<Item = &RipDbEntry> {
-    //     self.ok_routes.values()
-    // }
 }
+
+#[cfg(test)]
+#[path = "tests/rip_database_tests.rs"]
+mod tests;
