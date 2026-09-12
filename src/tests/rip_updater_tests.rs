@@ -33,8 +33,10 @@ fn response_buffer_contains_advertised_routes() {
         .unwrap();
 
     let changed_only = false;
-    let buffer =
-        build_response_buffer(&database, target_if_index, changed_only).expect("response buffer");
+    let buffers = build_response_buffers(&database, target_if_index, changed_only);
+    assert_eq!(buffers.len(), 1);
+
+    let buffer = &buffers[0];
     let packet = RipPacketData::from_slice(&buffer).unwrap();
 
     assert_eq!(packet.header.command, RIP_CMD_RESPONSE);
@@ -64,7 +66,7 @@ fn response_buffer_is_empty_when_no_routes_can_be_advertised() {
     let target_if_index = 1;
     let changed_only = false;
 
-    assert!(build_response_buffer(&database, target_if_index, changed_only).is_none());
+    assert!(build_response_buffers(&database, target_if_index, changed_only).is_empty());
 }
 
 #[test]
@@ -87,10 +89,54 @@ fn changed_only_response_buffer_contains_only_changed_routes() {
     database.add_remote_route(changed_entry, 2).unwrap();
 
     let changed_only = true;
-    let buffer =
-        build_response_buffer(&database, target_if_index, changed_only).expect("response buffer");
+    let buffers = build_response_buffers(&database, target_if_index, changed_only);
+    assert_eq!(buffers.len(), 1);
+
+    let buffer = &buffers[0];
     let packet = RipPacketData::from_slice(&buffer).unwrap();
 
     assert_eq!(packet.entries.len(), 1);
     assert_eq!(packet.entries[0].ip_address, changed_entry.ip_address);
+}
+
+#[test]
+fn response_buffers_are_split_into_rip_sized_chunks() {
+    let mut database = RipDatabase::new();
+    let route_count = RIP_RESPONSE_MAX_ENTRIES + 1;
+    let expected_buffer_count = 2;
+    let first_if_index = 1;
+    let target_if_index = 2;
+    let changed_only = false;
+
+    for host_id in 0..route_count {
+        let entry = rip_entry(
+            Ipv4Addr::new(10, 0, host_id as u8, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            Ipv4Addr::UNSPECIFIED,
+        );
+
+        database.add_local_route(entry, first_if_index).unwrap();
+    }
+
+    let buffers = build_response_buffers(&database, target_if_index, changed_only);
+
+    assert_eq!(buffers.len(), expected_buffer_count);
+
+    let packets: Vec<RipPacketData> = buffers
+        .iter()
+        .map(|buffer| RipPacketData::from_slice(buffer).unwrap())
+        .collect();
+    let advertised_route_count: usize = packets.iter().map(|packet| packet.entries.len()).sum();
+
+    assert_eq!(advertised_route_count, route_count);
+    assert!(
+        packets
+            .iter()
+            .all(|packet| packet.entries.len() <= RIP_RESPONSE_MAX_ENTRIES)
+    );
+    assert!(
+        packets
+            .iter()
+            .any(|packet| packet.entries.len() == RIP_RESPONSE_MAX_ENTRIES)
+    );
 }
