@@ -46,3 +46,12 @@ jobs:
 
       - name: Run integration scenarios
         run: sudo -E tests/integration/00_all.sh
+
+      - name: Upload integration logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs
+          path: target/integration-logs
+          if-no-files-found: warn
+          retention-days: 14
