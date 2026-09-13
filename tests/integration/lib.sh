@@ -76,7 +76,8 @@ start_router() {
         RIP_TIMEOUT_CHECK_INTERVAL_SECS \
         RIP_ROUTE_TIMEOUT_SECS \
         RIP_GARBAGE_COLLECTION_INTERVAL_SECS \
-        RIP_GARBAGE_COLLECTION_LIFETIME_SECS; do
+        RIP_GARBAGE_COLLECTION_LIFETIME_SECS \
+        RIP_HTTP_LISTEN_ADDR; do
         if [[ -n "${!name:-}" ]]; then
             env_args+=("$name=${!name}")
         fi

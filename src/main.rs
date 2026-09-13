@@ -1,9 +1,11 @@
 mod rip_deamon;
+use crate::http::{create_http_channel, spawn_http_server};
 use rip_deamon::RipDeamon;
 use routing_table::RoutingTable;
 use routing_table_rtnetlink::RtNetlinkRoutingTableDriver;
 mod address;
 mod cfg;
+mod http;
 mod result;
 mod rip_packet;
 mod rip_socket;
@@ -30,11 +32,13 @@ fn get_cfg_path() -> RipResult<String> {
 async fn run_rip_deamon() -> RipResult<()> {
     let routing_driver = RtNetlinkRoutingTableDriver::new().await?;
     let routing_table = RoutingTable::with_driver(routing_driver);
-    let mut deamon = RipDeamon::with_routing_table(routing_table);
+    let (http_request_tx, http_request_rx) = create_http_channel();
+    let mut deamon = RipDeamon::new(routing_table, http_request_rx);
     let cfg_path = get_cfg_path()?;
 
     log::info!("starting RIP daemon with configuration {}", cfg_path);
     deamon.setup(cfg_path.as_str())?;
+    spawn_http_server(http_request_tx).await?;
     deamon.run().await?;
     Ok(())
 }

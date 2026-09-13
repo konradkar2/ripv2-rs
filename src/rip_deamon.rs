@@ -1,5 +1,6 @@
 use crate::address::{is_net_mask_valid, is_unicast_address};
 use crate::cfg::{AdvertisedNetwork, RipConfiguration};
+use crate::http::{HttpRequest, HttpRequestKind, HttpRequestReceiver, HttpResponse, HttpRoute};
 use crate::result::{self, RIP_2_VERSION, RIP_UDP_PORT};
 use crate::result::{RipError, RipResult};
 use crate::rip_database::RipDatabase;
@@ -39,12 +40,20 @@ where
     interfaces: Vec<RipIfc>,
     database: RipDatabase,
     updater: RipUpdater,
+    http_request_rx: HttpRequestReceiver,
 }
 
 async fn wait_optional_timer(timer: &mut Option<Pin<Box<Sleep>>>) {
     match timer {
         Some(timer) => timer.as_mut().await,
         None => future::pending::<()>().await,
+    }
+}
+
+async fn recv_http_request(receiver: &mut Option<HttpRequestReceiver>) -> Option<HttpRequest> {
+    match receiver {
+        Some(receiver) => receiver.recv().await,
+        None => future::pending::<Option<HttpRequest>>().await,
     }
 }
 
@@ -202,12 +211,13 @@ impl<Driver> RipDeamon<Driver>
 where
     Driver: RoutingTableDriver,
 {
-    pub fn with_routing_table(routing_table: RoutingTable<Driver>) -> Self {
+    pub fn new(routing_table: RoutingTable<Driver>, http_request_rx: HttpRequestReceiver) -> Self {
         return Self {
             routing_table,
             interfaces: vec![],
             database: RipDatabase::new(),
             updater: RipUpdater::new(),
+            http_request_rx,
         };
     }
 
@@ -563,6 +573,18 @@ where
         }
     }
 
+    fn handle_http_request(&self, request: HttpRequest) {
+        let response = match request.kind {
+            HttpRequestKind::GetRoutes => {
+                let routes = HttpRoute::from_database(&self.database);
+                log::info!("returning {} routes for HTTP routes request", routes.len());
+                HttpResponse::Routes(routes)
+            }
+        };
+
+        let _ = request.reply_to.send(response);
+    }
+
     pub async fn run(&mut self) -> result::RipResult<()> {
         let mut request_warmup_timer =
             Some(Box::pin(time::sleep(create_request_warmup_duration())));
@@ -575,6 +597,11 @@ where
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<RipPacket>(64);
         self.spawn_rx_tasks(tx);
+        let (_, replacement_http_request_rx) = tokio::sync::mpsc::channel(1);
+        let mut http_request_rx = Some(std::mem::replace(
+            &mut self.http_request_rx,
+            replacement_http_request_rx,
+        ));
         let mut sigterm = signal(SignalKind::terminate())
             .map_err(|err| result::RipError::IoError(err.to_string()))?;
 
@@ -649,6 +676,16 @@ where
                     );
 
                     self.handle_packet(packet).await?;
+
+                    Ok(())
+                }
+
+                received = recv_http_request(&mut http_request_rx) => {
+                    if let Some(request) = received {
+                        self.handle_http_request(request);
+                    } else {
+                        http_request_rx = None;
+                    }
 
                     Ok(())
                 }

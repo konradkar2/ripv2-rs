@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RIP Admin</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">rip_v2</p>
+        <h1>Routing Table</h1>
+      </div>
+      <div class="status" id="status">Loading</div>
+    </header>
+
+    <main>
+      <section class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th>Destination</th>
+              <th>Next hop</th>
+              <th>Metric</th>
+              <th>Interface</th>
+              <th>Type</th>
+              <th>State</th>
+              <th>Kernel</th>
+              <th>Timeout</th>
+            </tr>
+          </thead>
+          <tbody id="routes-body">
+            <tr>
+              <td colspan="8" class="empty">Loading routes</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

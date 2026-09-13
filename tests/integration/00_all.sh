@@ -16,6 +16,7 @@ scenarios=(
     03_timeout_gc.sh
     04_route_selection.sh
     05_rtnetlink_soft_errors.sh
+    06_basic_http.sh
 )
 
 for scenario in "${scenarios[@]}"; do

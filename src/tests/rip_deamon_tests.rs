@@ -1,4 +1,5 @@
 use super::*;
+use crate::http::create_http_channel;
 use crate::result::RIP_CMD_RESPONSE;
 use crate::routing_table_stub::StubRoutingTableDriver;
 use libc::AF_INET;
@@ -45,7 +46,11 @@ fn learned_route_entry(entry: RipEntry, source_addr: Ipv4Addr) -> RipEntry {
 }
 
 fn test_deamon() -> RipDeamon<StubRoutingTableDriver> {
-    RipDeamon::with_routing_table(RoutingTable::with_driver(StubRoutingTableDriver::new()))
+    let (_, http_request_rx) = create_http_channel();
+    RipDeamon::new(
+        RoutingTable::with_driver(StubRoutingTableDriver::new()),
+        http_request_rx,
+    )
 }
 
 #[test]
