@@ -3,6 +3,7 @@ use crate::cfg::{AdvertisedNetwork, RipConfiguration};
 use crate::result::{self, RIP_2_VERSION, RIP_UDP_PORT};
 use crate::result::{RipError, RipResult};
 use crate::rip_database::RipDatabase;
+use crate::rip_database::RipDbEntry;
 use crate::rip_ifc::RipIfc;
 use crate::rip_packet::{RipEntry, RipIfInfo, RipPacket, RipPacketData};
 use crate::rip_route::advertised_network_to_local_route;
@@ -193,6 +194,10 @@ fn response_entry_to_route(entry: &RipEntry, packet: &RipPacket) -> Option<RipEn
     Some(route_entry)
 }
 
+fn route_is_from_current_next_hop(old_route: &RipDbEntry, route_entry: &RipEntry) -> bool {
+    old_route.rip_entry.next_hop == route_entry.next_hop
+}
+
 impl<Driver> RipDeamon<Driver>
 where
     Driver: RoutingTableDriver,
@@ -310,6 +315,15 @@ where
 
         let old_route = self.database.get_route(&route_entry).cloned();
         if let Some(old_route) = old_route {
+            if !route_is_from_current_next_hop(&old_route, &route_entry) {
+                log::debug!(
+                    "ignoring poisoned route {} from non-current next hop, current route is {}",
+                    format_entry(&route_entry),
+                    format_entry(&old_route.rip_entry)
+                );
+                return Ok(());
+            }
+
             self.routing_table.delete_route(&old_route).await?;
             self.database
                 .move_route_to_garbage(&old_route.rip_entry, std::time::Instant::now())?;
@@ -333,6 +347,21 @@ where
         Ok(())
     }
 
+    async fn replace_route_from_response(
+        &mut self,
+        old_route: RipDbEntry,
+        route_entry: RipEntry,
+        if_index: u32,
+    ) -> result::RipResult<()> {
+        self.routing_table.delete_route(&old_route).await?;
+        self.database.remove_route(&old_route.rip_entry)?;
+
+        let new_route = self.database.add_remote_route(route_entry, if_index)?;
+        self.routing_table.add_route(&new_route).await?;
+
+        Ok(())
+    }
+
     async fn update_route_from_response(
         &mut self,
         route_entry: RipEntry,
@@ -347,6 +376,7 @@ where
         let old_route = self.database.get_route(&route_entry).cloned();
 
         match old_route {
+            // Case 1: no active route to this destination. Learn it.
             None => {
                 self.database.remove_garbage_route(&route_entry);
                 let new_route = self.database.add_remote_route(route_entry, if_index)?;
@@ -357,6 +387,25 @@ where
                 );
                 self.routing_table.add_route(&new_route).await?;
             }
+            // Case 2: update from the current next-hop. Trust it even when the
+            // metric got worse, because this neighbor owns our active route.
+            Some(old_route) if route_is_from_current_next_hop(&old_route, &route_entry) => {
+                self.database.refresh_route_timeout(&route_entry);
+                if old_route.rip_entry == route_entry && old_route.if_index == if_index {
+                    return Ok(());
+                }
+
+                log::info!(
+                    "updating route {} from current next hop to {} on if_index {}",
+                    format_entry(&old_route.rip_entry),
+                    format_entry(&route_entry),
+                    if_index
+                );
+                self.replace_route_from_response(old_route, route_entry, if_index)
+                    .await?;
+            }
+            // Case 3: update from another next-hop with a better metric.
+            // Switch to it.
             Some(old_route) if old_route.rip_entry.metric > route_entry.metric => {
                 log::info!(
                     "replacing route {} with better route {} on if_index {}",
@@ -364,16 +413,14 @@ where
                     format_entry(&route_entry),
                     if_index
                 );
-                self.routing_table.delete_route(&old_route).await?;
-                self.database.remove_route(&old_route.rip_entry)?;
-
-                let new_route = self.database.add_remote_route(route_entry, if_index)?;
-                self.routing_table.add_route(&new_route).await?;
+                self.replace_route_from_response(old_route, route_entry, if_index)
+                    .await?;
             }
+            // Case 4: update from another next-hop with equal or worse metric.
+            // We intentionally skip the RFC half-timeout heuristic for now.
             Some(old_route) => {
-                self.database.refresh_route_timeout(&route_entry);
-                log::debug!(
-                    "keeping existing route {}, ignored candidate {}",
+                log::info!(
+                    "ignoring non-better route from alternate next-hop, keeping {}, ignored {}",
                     format_entry(&old_route.rip_entry),
                     format_entry(&route_entry)
                 );

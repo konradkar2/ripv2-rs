@@ -14,6 +14,7 @@ scenarios=(
     01_basic.sh
     02_sigterm_poison.sh
     03_timeout_gc.sh
+    04_route_selection.sh
 )
 
 for scenario in "${scenarios[@]}"; do

@@ -209,6 +209,42 @@ async fn poisoned_response_removes_existing_route_and_moves_it_to_garbage() {
 }
 
 #[tokio::test]
+async fn poisoned_response_from_different_next_hop_is_ignored() {
+    let mut deamon = test_deamon();
+    let if_index = 2;
+    let first_source_addr = Ipv4Addr::new(10, 0, 0, 2);
+    let second_source_addr = Ipv4Addr::new(10, 0, 0, 3);
+    let first_source = SocketAddrV4::new(first_source_addr, RIP_UDP_PORT);
+    let second_source = SocketAddrV4::new(second_source_addr, RIP_UDP_PORT);
+    let reachable_entry = response_entry(1);
+    let poisoned_entry = response_entry(RIP_INFINITY_METRIC);
+    let expected_route = learned_route_entry(reachable_entry, first_source_addr);
+
+    deamon
+        .handle_packet(response_packet(reachable_entry, first_source, if_index))
+        .await
+        .unwrap();
+    deamon
+        .handle_packet(response_packet(poisoned_entry, second_source, if_index))
+        .await
+        .unwrap();
+
+    assert_eq!(deamon.database.ok_routes.len(), 1);
+    assert!(deamon.database.garbage_routes.is_empty());
+
+    let route = deamon
+        .database
+        .get_route(&expected_route)
+        .expect("existing route");
+
+    assert_eq!(route.rip_entry, expected_route);
+
+    let routing_driver = deamon.routing_table.driver();
+    assert_eq!(routing_driver.added_routes.len(), 1);
+    assert!(routing_driver.deleted_routes.is_empty());
+}
+
+#[tokio::test]
 async fn poisoned_response_for_unknown_route_is_ignored() {
     let mut deamon = test_deamon();
     let if_index = 2;
@@ -230,7 +266,7 @@ async fn poisoned_response_for_unknown_route_is_ignored() {
 }
 
 #[tokio::test]
-async fn response_replaces_existing_route_when_new_metric_is_better() {
+async fn response_from_current_next_hop_replaces_existing_route_when_metric_is_better() {
     let mut deamon = test_deamon();
     let if_index = 2;
     let source_addr = Ipv4Addr::new(10, 0, 0, 2);
@@ -268,15 +304,15 @@ async fn response_replaces_existing_route_when_new_metric_is_better() {
 }
 
 #[tokio::test]
-async fn response_keeps_existing_route_when_new_metric_is_worse() {
+async fn response_from_current_next_hop_replaces_existing_route_when_metric_is_worse() {
     let mut deamon = test_deamon();
     let if_index = 2;
     let source_addr = Ipv4Addr::new(10, 0, 0, 2);
     let source = SocketAddrV4::new(source_addr, RIP_UDP_PORT);
     let first_entry = response_entry(1);
     let second_entry = response_entry(5);
-    let expected_route = learned_route_entry(first_entry, source_addr);
-    let ignored_route = learned_route_entry(second_entry, source_addr);
+    let first_route = learned_route_entry(first_entry, source_addr);
+    let expected_route = learned_route_entry(second_entry, source_addr);
 
     deamon
         .handle_packet(response_packet(first_entry, source, if_index))
@@ -295,9 +331,123 @@ async fn response_keeps_existing_route_when_new_metric_is_worse() {
         .expect("existing route");
 
     assert_eq!(route.rip_entry, expected_route);
+
+    let routing_driver = deamon.routing_table.driver();
+    assert_eq!(routing_driver.added_routes.len(), 2);
+    assert_eq!(routing_driver.deleted_routes.len(), 1);
+    assert_eq!(routing_driver.added_routes[1].rip_entry, expected_route);
+    assert_eq!(routing_driver.deleted_routes[0].rip_entry, first_route);
+}
+
+#[tokio::test]
+async fn response_from_different_next_hop_replaces_existing_route_when_metric_is_better() {
+    let mut deamon = test_deamon();
+    let if_index = 2;
+    let first_source_addr = Ipv4Addr::new(10, 0, 0, 2);
+    let second_source_addr = Ipv4Addr::new(10, 0, 0, 3);
+    let first_source = SocketAddrV4::new(first_source_addr, RIP_UDP_PORT);
+    let second_source = SocketAddrV4::new(second_source_addr, RIP_UDP_PORT);
+    let first_entry = response_entry(5);
+    let second_entry = response_entry(1);
+    let first_route = learned_route_entry(first_entry, first_source_addr);
+    let expected_route = learned_route_entry(second_entry, second_source_addr);
+
+    deamon
+        .handle_packet(response_packet(first_entry, first_source, if_index))
+        .await
+        .unwrap();
+    deamon
+        .handle_packet(response_packet(second_entry, second_source, if_index))
+        .await
+        .unwrap();
+
+    assert_eq!(deamon.database.ok_routes.len(), 1);
+
+    let route = deamon
+        .database
+        .get_route(&expected_route)
+        .expect("replaced route");
+
+    assert_eq!(route.rip_entry, expected_route);
+
+    let routing_driver = deamon.routing_table.driver();
+    assert_eq!(routing_driver.added_routes.len(), 2);
+    assert_eq!(routing_driver.deleted_routes.len(), 1);
+    assert_eq!(routing_driver.added_routes[1].rip_entry, expected_route);
+    assert_eq!(routing_driver.deleted_routes[0].rip_entry, first_route);
+}
+
+#[tokio::test]
+async fn response_from_different_next_hop_keeps_existing_route_when_metric_is_worse() {
+    let mut deamon = test_deamon();
+    let if_index = 2;
+    let first_source_addr = Ipv4Addr::new(10, 0, 0, 2);
+    let second_source_addr = Ipv4Addr::new(10, 0, 0, 3);
+    let first_source = SocketAddrV4::new(first_source_addr, RIP_UDP_PORT);
+    let second_source = SocketAddrV4::new(second_source_addr, RIP_UDP_PORT);
+    let first_entry = response_entry(1);
+    let second_entry = response_entry(5);
+    let expected_route = learned_route_entry(first_entry, first_source_addr);
+    let ignored_route = learned_route_entry(second_entry, second_source_addr);
+
+    deamon
+        .handle_packet(response_packet(first_entry, first_source, if_index))
+        .await
+        .unwrap();
+    deamon
+        .handle_packet(response_packet(second_entry, second_source, if_index))
+        .await
+        .unwrap();
+
+    assert_eq!(deamon.database.ok_routes.len(), 1);
+
+    let route = deamon
+        .database
+        .get_route(&expected_route)
+        .expect("existing route");
+
+    assert_eq!(route.rip_entry, expected_route);
+    assert_ne!(route.rip_entry.next_hop, ignored_route.next_hop);
     assert_ne!(route.rip_entry.metric, ignored_route.metric);
 
     let routing_driver = deamon.routing_table.driver();
     assert_eq!(routing_driver.added_routes.len(), 1);
-    assert_eq!(routing_driver.deleted_routes.len(), 0);
+    assert!(routing_driver.deleted_routes.is_empty());
+}
+
+#[tokio::test]
+async fn response_from_different_next_hop_keeps_existing_route_when_metric_is_equal() {
+    let mut deamon = test_deamon();
+    let if_index = 2;
+    let first_source_addr = Ipv4Addr::new(10, 0, 0, 2);
+    let second_source_addr = Ipv4Addr::new(10, 0, 0, 3);
+    let first_source = SocketAddrV4::new(first_source_addr, RIP_UDP_PORT);
+    let second_source = SocketAddrV4::new(second_source_addr, RIP_UDP_PORT);
+    let first_entry = response_entry(1);
+    let second_entry = response_entry(1);
+    let expected_route = learned_route_entry(first_entry, first_source_addr);
+    let ignored_route = learned_route_entry(second_entry, second_source_addr);
+
+    deamon
+        .handle_packet(response_packet(first_entry, first_source, if_index))
+        .await
+        .unwrap();
+    deamon
+        .handle_packet(response_packet(second_entry, second_source, if_index))
+        .await
+        .unwrap();
+
+    assert_eq!(deamon.database.ok_routes.len(), 1);
+
+    let route = deamon
+        .database
+        .get_route(&expected_route)
+        .expect("existing route");
+
+    assert_eq!(route.rip_entry, expected_route);
+    assert_ne!(route.rip_entry.next_hop, ignored_route.next_hop);
+
+    let routing_driver = deamon.routing_table.driver();
+    assert_eq!(routing_driver.added_routes.len(), 1);
+    assert!(routing_driver.deleted_routes.is_empty());
 }

@@ -1,0 +1,11 @@
+rip_configuration:
+  version: 2
+  rip_interfaces:
+    - dev: r1-r2
+  advertised_networks:
+    - address: "10.0.12.0"
+      prefix: 24
+      dev: r1-r2
+    - address: "10.1.1.0"
+      prefix: 24
+      dev: lan1

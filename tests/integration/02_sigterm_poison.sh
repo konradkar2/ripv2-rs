@@ -18,7 +18,7 @@ trap integration_cleanup EXIT INT TERM
 
 build_binary
 setup_topology
-start_all_routers
+start_all_routers tests/integration/02_sigterm_poison
 
 wait_for_basic_convergence
 stop_router r3 TERM

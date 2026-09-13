@@ -41,6 +41,13 @@ setup_topology() {
     bash "$SCRIPT_DIR/setup_env.sh"
 }
 
+setup_topology_from() {
+    local setup_script="$1"
+
+    cleanup_topology
+    bash "$SCRIPT_DIR/$setup_script"
+}
+
 integration_cleanup() {
     local status=$?
 
@@ -84,10 +91,12 @@ start_router() {
 }
 
 start_all_routers() {
+    local cfg_dir="${1:-tests/integration/01_basic}"
+
     mkdir -p "$LOG_DIR"
-    start_router r1 cfgs/r1.yml
-    start_router r2 cfgs/r2.yml
-    start_router r3 cfgs/r3.yml
+    start_router r1 "$cfg_dir/r1.yml"
+    start_router r2 "$cfg_dir/r2.yml"
+    start_router r3 "$cfg_dir/r3.yml"
 }
 
 stop_router() {
@@ -168,6 +177,19 @@ wait_for_no_route() {
     return 1
 }
 
+assert_route_not_contains() {
+    local namespace="$1"
+    local prefix="$2"
+    local unexpected="$3"
+
+    echo "Checking $namespace route $prefix does not contain: $unexpected"
+    if route_contains "$namespace" "$prefix" "$unexpected"; then
+        echo "Route check failed for $namespace $prefix, unexpected: $unexpected" >&2
+        ip netns exec "$namespace" ip -4 route show "$prefix" >&2 || true
+        return 1
+    fi
+}
+
 wait_for_log() {
     local namespace="$1"
     local pattern="$2"
@@ -205,7 +227,10 @@ wait_for_basic_convergence() {
 
 print_routes() {
     echo "Routes after scenario"
-    ip netns exec r1 ip -4 route show || true
-    ip netns exec r2 ip -4 route show || true
-    ip netns exec r3 ip -4 route show || true
+    local namespace
+
+    for namespace in $(ip netns list | awk '{print $1}' | sort); do
+        echo "[$namespace]"
+        ip netns exec "$namespace" ip -4 route show || true
+    done
 }

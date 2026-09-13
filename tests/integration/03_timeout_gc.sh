@@ -29,9 +29,9 @@ export RIP_GARBAGE_COLLECTION_LIFETIME_SECS="${RIP_GARBAGE_COLLECTION_LIFETIME_S
 build_binary
 setup_topology
 mkdir -p "$LOG_DIR"
-RIP_ROUTE_TIMEOUT_SECS=30 start_router r1 cfgs/r1.yml
-RIP_ROUTE_TIMEOUT_SECS=6 start_router r2 cfgs/r2.yml
-RIP_ROUTE_TIMEOUT_SECS=30 start_router r3 cfgs/r3.yml
+RIP_ROUTE_TIMEOUT_SECS=30 start_router r1 tests/integration/03_timeout_gc/r1.yml
+RIP_ROUTE_TIMEOUT_SECS=6 start_router r2 tests/integration/03_timeout_gc/r2.yml
+RIP_ROUTE_TIMEOUT_SECS=30 start_router r3 tests/integration/03_timeout_gc/r3.yml
 
 wait_for_basic_convergence
 stop_router r3 KILL

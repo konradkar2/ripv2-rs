@@ -20,7 +20,7 @@ trap integration_cleanup EXIT INT TERM
 
 build_binary
 setup_topology
-start_all_routers
+start_all_routers tests/integration/01_basic
 
 wait_for_basic_convergence
 print_routes

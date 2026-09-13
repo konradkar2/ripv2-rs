@@ -6,8 +6,8 @@ if ((EUID != 0)); then
     exit 1
 fi
 
-NAMESPACES=(r1 r2 r3)
-HOST_LINKS=(r1-r2 r2-r1 r2-r3 r3-r2)
+NAMESPACES=(r1 r2 r3 r4 r5)
+HOST_LINKS=(r1-r2 r2-r1 r2-r3 r3-r2 r1-r3 r3-r1 r3-r4 r4-r3 r4-r5 r5-r4)
 
 for namespace in "${NAMESPACES[@]}"; do
     if ip netns list | awk '{print $1}' | grep -qx "$namespace"; then

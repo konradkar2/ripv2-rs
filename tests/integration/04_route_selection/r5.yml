@@ -1,0 +1,11 @@
+rip_configuration:
+  version: 2
+  rip_interfaces:
+    - dev: r5-r4
+  advertised_networks:
+    - address: "10.0.45.0"
+      prefix: 24
+      dev: r5-r4
+    - address: "10.99.0.0"
+      prefix: 24
+      dev: target5
