@@ -9,6 +9,8 @@ set -euo pipefail
 # exit. This runner fails fast on the first failing scenario.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SUITE_LOG_DIR="$ROOT_DIR/target/integration-logs/00_all"
 
 scenarios=(
     01_basic.sh
@@ -19,9 +21,24 @@ scenarios=(
     06_basic_http.sh
 )
 
+mkdir -p "$SUITE_LOG_DIR"
+failed_scenarios=()
+
 for scenario in "${scenarios[@]}"; do
+    log_path="$SUITE_LOG_DIR/${scenario%.sh}.log"
+
     echo "Running integration scenario: $scenario"
-    "$SCRIPT_DIR/$scenario"
+    if "$SCRIPT_DIR/$scenario" >"$log_path" 2>&1; then
+        echo "$scenario: passed"
+    else
+        echo "$scenario: failed (log: $log_path)"
+        failed_scenarios+=("$scenario")
+    fi
 done
+
+if ((${#failed_scenarios[@]} > 0)); then
+    echo "Integration scenarios failed: ${failed_scenarios[*]}"
+    exit 1
+fi
 
 echo "All integration scenarios passed"

@@ -58,7 +58,7 @@ pub struct HttpRoute {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct HttpLocalRouteRequest {
+pub struct HttpAddLocalRouteRequest {
     pub address: String,
     pub prefix: u32,
     pub dev: String,
@@ -196,7 +196,7 @@ async fn get_routes(State(state): State<HttpState>) -> impl IntoResponse {
 
 async fn add_local_route(
     State(state): State<HttpState>,
-    Json(payload): Json<HttpLocalRouteRequest>,
+    Json(payload): Json<HttpAddLocalRouteRequest>,
 ) -> impl IntoResponse {
     log::info!(
         "handling HTTP POST /api/v1/local-routes for {}/{} on {}",
