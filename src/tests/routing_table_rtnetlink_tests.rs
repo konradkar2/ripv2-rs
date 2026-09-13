@@ -14,6 +14,7 @@ fn route_entry() -> RipDbEntry {
             metric: 2,
         },
         if_index: 7,
+        if_name: "eth-test".to_string(),
         changed: true,
         is_local: false,
         in_routing_table: true,

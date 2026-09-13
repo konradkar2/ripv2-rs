@@ -16,9 +16,10 @@ fn rip_entry(ip_address: Ipv4Addr, next_hop: Ipv4Addr) -> RipEntry {
 fn timed_out_route_moves_to_garbage_and_is_advertised_as_changed() {
     let mut database = RipDatabase::new();
     let if_index = 2;
+    let if_name = "eth-test";
     let entry = rip_entry(Ipv4Addr::new(10, 0, 1, 0), Ipv4Addr::new(10, 0, 0, 1));
 
-    database.add_remote_route(entry, if_index).unwrap();
+    database.add_remote_route(entry, if_index, if_name).unwrap();
 
     let timeout_increment_secs = 180;
     let timeout_limit_secs = 180;
@@ -53,18 +54,21 @@ fn route_key_identifies_destination_not_next_hop() {
     let mut database = RipDatabase::new();
     let first_if_index = 2;
     let second_if_index = 3;
+    let first_if_name = "eth-first";
+    let second_if_name = "eth-second";
     let first_entry = rip_entry(Ipv4Addr::new(10, 0, 1, 0), Ipv4Addr::new(10, 0, 0, 1));
     let second_entry = rip_entry(Ipv4Addr::new(10, 0, 1, 0), Ipv4Addr::new(10, 0, 0, 2));
 
     let added_route = database
-        .add_remote_route(first_entry, first_if_index)
+        .add_remote_route(first_entry, first_if_index, first_if_name)
         .unwrap();
-    let duplicate_result = database.add_remote_route(second_entry, second_if_index);
+    let duplicate_result = database.add_remote_route(second_entry, second_if_index, second_if_name);
 
     assert!(duplicate_result.is_err());
     assert_eq!(database.ok_routes.len(), 1);
     assert_eq!(added_route.rip_entry.next_hop, first_entry.next_hop);
     assert_eq!(added_route.if_index, first_if_index);
+    assert_eq!(added_route.if_name, first_if_name);
 
     let route = database
         .get_route(&second_entry)
@@ -78,9 +82,10 @@ fn route_key_identifies_destination_not_next_hop() {
 fn garbage_collection_removes_expired_garbage_routes() {
     let mut database = RipDatabase::new();
     let if_index = 2;
+    let if_name = "eth-test";
     let entry = rip_entry(Ipv4Addr::new(10, 0, 1, 0), Ipv4Addr::new(10, 0, 0, 1));
 
-    database.add_remote_route(entry, if_index).unwrap();
+    database.add_remote_route(entry, if_index, if_name).unwrap();
     database
         .move_route_to_garbage(&entry, Instant::now())
         .unwrap();
@@ -100,14 +105,16 @@ fn poison_all_routes_marks_all_routes_unreachable() {
     let mut database = RipDatabase::new();
     let local_if_index = 1;
     let remote_if_index = 2;
+    let local_if_name = "lan-test";
+    let remote_if_name = "eth-test";
     let local_entry = rip_entry(Ipv4Addr::new(10, 0, 1, 0), Ipv4Addr::UNSPECIFIED);
     let remote_entry = rip_entry(Ipv4Addr::new(10, 0, 2, 0), Ipv4Addr::new(10, 0, 0, 2));
 
     database
-        .add_local_route(local_entry, local_if_index)
+        .add_local_route(local_entry, local_if_index, local_if_name)
         .unwrap();
     database
-        .add_remote_route(remote_entry, remote_if_index)
+        .add_remote_route(remote_entry, remote_if_index, remote_if_name)
         .unwrap();
     database.mark_all_routes_as_unchanged();
 

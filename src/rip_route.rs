@@ -13,15 +13,12 @@ use crate::{
 pub struct LocalRoute {
     pub entry: RipEntry,
     pub if_index: u32,
+    pub if_name: String,
 }
 
 pub fn advertised_network_to_local_route(network: &AdvertisedNetwork) -> RipResult<LocalRoute> {
     let if_index = ifc_nametoindex(&network.dev).map_err(|err| {
-        RipError::InvalidConfiguration(format!(
-            "invalid dev: {}: {}",
-            network.address.as_str(),
-            err
-        ))
+        RipError::InvalidConfiguration(format!("invalid dev: {}: {}", network.dev.as_str(), err))
     })?;
     let subnet_mask = prefix_to_mask(network.prefix)?;
     let ip_address = Ipv4Addr::from_str(network.address.as_str()).map_err(|err| {
@@ -45,5 +42,6 @@ pub fn advertised_network_to_local_route(network: &AdvertisedNetwork) -> RipResu
     Ok(LocalRoute {
         entry: local_entry,
         if_index,
+        if_name: network.dev.clone(),
     })
 }

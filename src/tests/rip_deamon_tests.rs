@@ -1,9 +1,11 @@
 use super::*;
-use crate::http::create_http_channel;
+use crate::cfg::AdvertisedNetwork;
+use crate::http::{HttpRequest, HttpRequestKind, HttpResponse, create_http_channel};
 use crate::result::RIP_CMD_RESPONSE;
 use crate::routing_table_stub::StubRoutingTableDriver;
 use libc::AF_INET;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use tokio::sync::oneshot;
 
 fn if_info(if_index: u32) -> RipIfInfo {
     RipIfInfo {
@@ -51,6 +53,74 @@ fn test_deamon() -> RipDeamon<StubRoutingTableDriver> {
         RoutingTable::with_driver(StubRoutingTableDriver::new()),
         http_request_rx,
     )
+}
+
+#[tokio::test]
+async fn http_request_adds_local_route_to_database() {
+    let mut deamon = test_deamon();
+    let (reply_to, reply_rx) = oneshot::channel();
+    let address = "10.44.0.0".to_string();
+    let prefix = 24;
+    let dev = "lo".to_string();
+
+    deamon.handle_http_request(HttpRequest {
+        kind: HttpRequestKind::AddLocalRoute(AdvertisedNetwork {
+            address: address.clone(),
+            prefix,
+            dev: dev.clone(),
+        }),
+        reply_to,
+    });
+
+    match reply_rx.await.expect("HTTP response") {
+        HttpResponse::Ok => {}
+        HttpResponse::Error(message) => panic!("unexpected error response: {}", message),
+        HttpResponse::Routes(_) => panic!("unexpected routes response"),
+    }
+
+    let route = deamon
+        .database
+        .ok_routes
+        .values()
+        .find(|route| route.if_name == dev)
+        .expect("local route should be added");
+
+    assert_eq!(
+        route.rip_entry.ip_address,
+        u32::from(Ipv4Addr::new(10, 44, 0, 0))
+    );
+    assert_eq!(
+        route.rip_entry.subnet_mask,
+        u32::from(Ipv4Addr::new(255, 255, 255, 0))
+    );
+    assert!(route.is_local);
+    assert!(route.changed);
+    assert!(!route.in_routing_table);
+}
+
+#[tokio::test]
+async fn http_request_rejects_local_route_with_invalid_device() {
+    let mut deamon = test_deamon();
+    let (reply_to, reply_rx) = oneshot::channel();
+
+    deamon.handle_http_request(HttpRequest {
+        kind: HttpRequestKind::AddLocalRoute(AdvertisedNetwork {
+            address: "10.45.0.0".to_string(),
+            prefix: 24,
+            dev: "device-that-does-not-exist".to_string(),
+        }),
+        reply_to,
+    });
+
+    match reply_rx.await.expect("HTTP response") {
+        HttpResponse::Error(message) => {
+            assert!(message.contains("invalid dev: device-that-does-not-exist"));
+        }
+        HttpResponse::Ok => panic!("unexpected ok response"),
+        HttpResponse::Routes(_) => panic!("unexpected routes response"),
+    }
+
+    assert!(deamon.database.ok_routes.is_empty());
 }
 
 #[test]

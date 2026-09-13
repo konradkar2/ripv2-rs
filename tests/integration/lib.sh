@@ -69,6 +69,7 @@ start_router() {
     local namespace="$1"
     local cfg_path="$2"
     local log_path="$LOG_DIR/$namespace.log"
+    local stdio_log_path="$LOG_DIR/$namespace.stdio.log"
     local env_args=("RUST_LOG=$RUST_LOG")
     local name
 
@@ -84,8 +85,8 @@ start_router() {
     done
 
     echo "Starting $namespace, logs: $log_path"
-    env "${env_args[@]}" ip netns exec "$namespace" "$BIN_PATH" "$ROOT_DIR/$cfg_path" \
-        >"$log_path" 2>&1 &
+    env "${env_args[@]}" ip netns exec "$namespace" "$BIN_PATH" "$ROOT_DIR/$cfg_path" "$log_path" \
+        >"$stdio_log_path" 2>&1 &
     local pid=$!
     PIDS+=("$pid")
     ROUTER_PIDS["$namespace"]="$pid"

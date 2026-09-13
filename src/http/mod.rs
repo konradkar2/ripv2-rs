@@ -3,14 +3,15 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tower_http::services::{ServeDir, ServeFile};
 
+use crate::cfg::AdvertisedNetwork;
 use crate::result::{RipError, RipResult};
 use crate::rip_database::{RipDatabase, RipDbEntry};
 
@@ -26,15 +27,19 @@ pub struct HttpRequest {
 
 pub enum HttpRequestKind {
     GetRoutes,
+    AddLocalRoute(AdvertisedNetwork),
 }
 
 pub enum HttpResponse {
     Routes(Vec<HttpRoute>),
+    Ok,
+    Error(String),
 }
 
 #[derive(Clone)]
 struct HttpState {
     sender: HttpRequestSender,
+    log_file_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,12 +49,24 @@ pub struct HttpRoute {
     pub netmask: String,
     pub next_hop: String,
     pub metric: u32,
-    pub interface_index: u32,
+    pub interface_name: String,
     pub route_type: &'static str,
     pub state: &'static str,
     pub changed: bool,
     pub in_kernel: bool,
     pub timeout_seconds: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HttpLocalRouteRequest {
+    pub address: String,
+    pub prefix: u32,
+    pub dev: String,
+}
+
+#[derive(Debug, Serialize)]
+struct HttpStatusResponse {
+    status: &'static str,
 }
 
 impl HttpRoute {
@@ -71,7 +88,7 @@ impl HttpRoute {
                 route.destination.clone(),
                 route.prefix,
                 route.next_hop.clone(),
-                route.interface_index,
+                route.interface_name.clone(),
             )
         });
         routes
@@ -88,7 +105,7 @@ impl HttpRoute {
             netmask: Ipv4Addr::from(entry.subnet_mask).to_string(),
             next_hop: Ipv4Addr::from(entry.next_hop).to_string(),
             metric: entry.metric,
-            interface_index: route.if_index,
+            interface_name: route.if_name.clone(),
             route_type,
             state,
             changed: route.changed,
@@ -102,7 +119,10 @@ pub fn create_http_channel() -> (HttpRequestSender, HttpRequestReceiver) {
     mpsc::channel(32)
 }
 
-pub async fn spawn_http_server(sender: HttpRequestSender) -> RipResult<()> {
+pub async fn spawn_http_server(
+    sender: HttpRequestSender,
+    log_file_path: Option<PathBuf>,
+) -> RipResult<()> {
     let listen_addr =
         env::var("RIP_HTTP_LISTEN_ADDR").unwrap_or(DEFAULT_HTTP_LISTEN_ADDR.to_string());
     let listener = tokio::net::TcpListener::bind(&listen_addr)
@@ -113,8 +133,13 @@ pub async fn spawn_http_server(sender: HttpRequestSender) -> RipResult<()> {
         ServeDir::new(&static_path).fallback(ServeFile::new(static_path.join("index.html")));
     let app = Router::new()
         .route("/api/v1/routes", get(get_routes))
+        .route("/api/v1/local-routes", post(add_local_route))
+        .route("/api/v1/logs", get(get_logs))
         .fallback_service(static_files)
-        .with_state(HttpState { sender });
+        .with_state(HttpState {
+            sender,
+            log_file_path,
+        });
 
     log::info!("HTTP server listening on {}", listen_addr);
     tokio::spawn(async move {
@@ -126,10 +151,73 @@ pub async fn spawn_http_server(sender: HttpRequestSender) -> RipResult<()> {
     Ok(())
 }
 
+async fn get_logs(State(state): State<HttpState>) -> impl IntoResponse {
+    log::info!("handling HTTP GET /api/v1/logs");
+    let Some(log_file_path) = state.log_file_path else {
+        return (
+            StatusCode::NOT_FOUND,
+            "log file path was not configured for this daemon",
+        )
+            .into_response();
+    };
+
+    match tokio::fs::read_to_string(&log_file_path).await {
+        Ok(content) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            content,
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "failed to read log file {}: {}",
+                log_file_path.display(),
+                err
+            ),
+        )
+            .into_response(),
+    }
+}
+
 async fn get_routes(State(state): State<HttpState>) -> impl IntoResponse {
     log::info!("handling HTTP GET /api/v1/routes");
     match send_http_request(&state.sender, HttpRequestKind::GetRoutes).await {
         Ok(HttpResponse::Routes(routes)) => Json(routes).into_response(),
+        Ok(HttpResponse::Error(message)) => (StatusCode::BAD_REQUEST, message).into_response(),
+        Ok(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected response from RIP daemon",
+        )
+            .into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn add_local_route(
+    State(state): State<HttpState>,
+    Json(payload): Json<HttpLocalRouteRequest>,
+) -> impl IntoResponse {
+    log::info!(
+        "handling HTTP POST /api/v1/local-routes for {}/{} on {}",
+        payload.address,
+        payload.prefix,
+        payload.dev
+    );
+    let network = AdvertisedNetwork {
+        address: payload.address,
+        prefix: payload.prefix,
+        dev: payload.dev,
+    };
+
+    match send_http_request(&state.sender, HttpRequestKind::AddLocalRoute(network)).await {
+        Ok(HttpResponse::Ok) => Json(HttpStatusResponse { status: "ok" }).into_response(),
+        Ok(HttpResponse::Error(message)) => (StatusCode::BAD_REQUEST, message).into_response(),
+        Ok(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "unexpected response from RIP daemon",
+        )
+            .into_response(),
         Err(response) => response,
     }
 }

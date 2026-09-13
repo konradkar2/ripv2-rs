@@ -28,6 +28,7 @@ impl fmt::Display for RipRouteKey {
 pub struct RipDbEntry {
     pub rip_entry: RipEntry,
     pub if_index: u32,
+    pub if_name: String,
 
     pub changed: bool,
     pub is_local: bool,
@@ -51,13 +52,25 @@ impl RipDatabase {
         };
     }
 
-    pub fn add_local_route(&mut self, entry: RipEntry, if_index: u32) -> RipResult<()> {
+    pub fn add_local_route(
+        &mut self,
+        entry: RipEntry,
+        if_index: u32,
+        if_name: impl Into<String>,
+    ) -> RipResult<()> {
         let changed = true;
         let is_local = true;
         let in_routing_table = false;
 
-        self.add_route(entry, if_index, changed, is_local, in_routing_table)
-            .map(|_| ())
+        self.add_route(
+            entry,
+            if_index,
+            if_name.into(),
+            changed,
+            is_local,
+            in_routing_table,
+        )
+        .map(|_| ())
     }
 
     pub fn get_route(&self, entry: &RipEntry) -> Option<&RipDbEntry> {
@@ -65,18 +78,31 @@ impl RipDatabase {
         self.ok_routes.get(&key)
     }
 
-    pub fn add_remote_route(&mut self, entry: RipEntry, if_index: u32) -> RipResult<RipDbEntry> {
+    pub fn add_remote_route(
+        &mut self,
+        entry: RipEntry,
+        if_index: u32,
+        if_name: impl Into<String>,
+    ) -> RipResult<RipDbEntry> {
         let changed = true;
         let is_local = false;
         let in_routing_table = true;
 
-        self.add_route(entry, if_index, changed, is_local, in_routing_table)
+        self.add_route(
+            entry,
+            if_index,
+            if_name.into(),
+            changed,
+            is_local,
+            in_routing_table,
+        )
     }
 
     fn add_route(
         &mut self,
         entry: RipEntry,
         if_index: u32,
+        if_name: String,
         changed: bool,
         is_local: bool,
         in_routing_table: bool,
@@ -86,6 +112,7 @@ impl RipDatabase {
         let value = RipDbEntry {
             rip_entry: entry,
             if_index,
+            if_name,
             changed,
             is_local,
             in_routing_table,

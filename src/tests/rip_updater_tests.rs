@@ -16,6 +16,8 @@ fn rip_entry(ip_address: Ipv4Addr, subnet_mask: Ipv4Addr, next_hop: Ipv4Addr) ->
 fn response_buffer_contains_advertised_routes() {
     let mut database = RipDatabase::new();
     let target_if_index = 2;
+    let first_if_name = "eth-first";
+    let target_if_name = "eth-target";
     let advertised_entry = rip_entry(
         Ipv4Addr::new(10, 0, 1, 0),
         Ipv4Addr::new(255, 255, 255, 0),
@@ -27,9 +29,11 @@ fn response_buffer_contains_advertised_routes() {
         Ipv4Addr::UNSPECIFIED,
     );
 
-    database.add_local_route(advertised_entry, 1).unwrap();
     database
-        .add_local_route(split_horizon_entry, target_if_index)
+        .add_local_route(advertised_entry, 1, first_if_name)
+        .unwrap();
+    database
+        .add_local_route(split_horizon_entry, target_if_index, target_if_name)
         .unwrap();
 
     let changed_only = false;
@@ -55,13 +59,14 @@ fn response_buffer_contains_advertised_routes() {
 #[test]
 fn response_buffer_is_empty_when_no_routes_can_be_advertised() {
     let mut database = RipDatabase::new();
+    let if_name = "eth-test";
     let entry = rip_entry(
         Ipv4Addr::new(10, 0, 1, 0),
         Ipv4Addr::new(255, 255, 255, 0),
         Ipv4Addr::UNSPECIFIED,
     );
 
-    database.add_local_route(entry, 1).unwrap();
+    database.add_local_route(entry, 1, if_name).unwrap();
 
     let target_if_index = 1;
     let changed_only = false;
@@ -73,6 +78,8 @@ fn response_buffer_is_empty_when_no_routes_can_be_advertised() {
 fn changed_only_response_buffer_contains_only_changed_routes() {
     let mut database = RipDatabase::new();
     let target_if_index = 3;
+    let unchanged_if_name = "eth-unchanged";
+    let changed_if_name = "eth-changed";
     let unchanged_entry = rip_entry(
         Ipv4Addr::new(10, 0, 1, 0),
         Ipv4Addr::new(255, 255, 255, 0),
@@ -84,9 +91,13 @@ fn changed_only_response_buffer_contains_only_changed_routes() {
         Ipv4Addr::new(10, 0, 0, 2),
     );
 
-    database.add_local_route(unchanged_entry, 1).unwrap();
+    database
+        .add_local_route(unchanged_entry, 1, unchanged_if_name)
+        .unwrap();
     database.mark_all_routes_as_unchanged();
-    database.add_remote_route(changed_entry, 2).unwrap();
+    database
+        .add_remote_route(changed_entry, 2, changed_if_name)
+        .unwrap();
 
     let changed_only = true;
     let buffers = build_response_buffers(&database, target_if_index, changed_only);
@@ -105,6 +116,7 @@ fn response_buffers_are_split_into_rip_sized_chunks() {
     let route_count = RIP_RESPONSE_MAX_ENTRIES + 1;
     let expected_buffer_count = 2;
     let first_if_index = 1;
+    let first_if_name = "eth-first";
     let target_if_index = 2;
     let changed_only = false;
 
@@ -115,7 +127,9 @@ fn response_buffers_are_split_into_rip_sized_chunks() {
             Ipv4Addr::UNSPECIFIED,
         );
 
-        database.add_local_route(entry, first_if_index).unwrap();
+        database
+            .add_local_route(entry, first_if_index, first_if_name)
+            .unwrap();
     }
 
     let buffers = build_response_buffers(&database, target_if_index, changed_only);

@@ -16,18 +16,93 @@
     </header>
 
     <main>
+      <section class="form-shell">
+        <div class="section-header">
+          <h2>Add Local Network</h2>
+          <div class="status" id="local-route-status">Ready</div>
+        </div>
+        <form id="local-route-form" class="local-route-form">
+          <label>
+            Address
+            <input
+              id="local-route-address"
+              name="address"
+              type="text"
+              inputmode="decimal"
+              placeholder="10.4.4.0"
+              required
+            />
+          </label>
+          <label>
+            Prefix
+            <input
+              id="local-route-prefix"
+              name="prefix"
+              type="number"
+              min="0"
+              max="32"
+              value="24"
+              required
+            />
+          </label>
+          <label>
+            Device
+            <input
+              id="local-route-dev"
+              name="dev"
+              type="text"
+              placeholder="lan1"
+              required
+            />
+          </label>
+          <button type="submit">Add</button>
+        </form>
+      </section>
+
       <section class="table-shell">
         <table>
           <thead>
             <tr>
-              <th>Destination</th>
-              <th>Next hop</th>
-              <th>Metric</th>
-              <th>Interface</th>
-              <th>Type</th>
-              <th>State</th>
-              <th>Kernel</th>
-              <th>Timeout</th>
+              <th aria-sort="none">
+                <button class="sort-button" type="button" data-sort-key="destination">
+                  Destination<span class="sort-indicator"></span>
+                </button>
+              </th>
+              <th aria-sort="none">
+                <button class="sort-button" type="button" data-sort-key="next_hop">
+                  Next hop<span class="sort-indicator"></span>
+                </button>
+              </th>
+              <th aria-sort="none">
+                <button class="sort-button" type="button" data-sort-key="metric">
+                  Metric<span class="sort-indicator"></span>
+                </button>
+              </th>
+              <th aria-sort="none">
+                <button class="sort-button" type="button" data-sort-key="interface_name">
+                  Interface<span class="sort-indicator"></span>
+                </button>
+              </th>
+              <th aria-sort="none">
+                <button class="sort-button" type="button" data-sort-key="route_type">
+                  Type<span class="sort-indicator"></span>
+                </button>
+              </th>
+              <th aria-sort="none">
+                <button class="sort-button" type="button" data-sort-key="state">
+                  State<span class="sort-indicator"></span>
+                </button>
+              </th>
+              <th aria-sort="none">
+                <button class="sort-button" type="button" data-sort-key="in_kernel">
+                  Kernel<span class="sort-indicator"></span>
+                </button>
+              </th>
+              <th aria-sort="none">
+                <button class="sort-button" type="button" data-sort-key="timeout_seconds">
+                  Timeout<span class="sort-indicator"></span>
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody id="routes-body">
@@ -36,6 +111,14 @@
             </tr>
           </tbody>
         </table>
+      </section>
+
+      <section class="logs-shell">
+        <div class="section-header">
+          <h2>Daemon Logs</h2>
+          <div class="status" id="logs-status">Loading</div>
+        </div>
+        <pre id="logs-output" class="logs-output">Loading logs</pre>
       </section>
     </main>
 

@@ -236,12 +236,13 @@ where
     fn setup_advertised_network(&mut self, network: &AdvertisedNetwork) -> RipResult<()> {
         let local_route = advertised_network_to_local_route(network)?;
         log::info!(
-            "adding local advertised route {} on if_index {}",
+            "adding local advertised route {} on {} ({})",
             format_entry(&local_route.entry),
+            local_route.if_name,
             local_route.if_index
         );
         self.database
-            .add_local_route(local_route.entry, local_route.if_index)
+            .add_local_route(local_route.entry, local_route.if_index, local_route.if_name)
     }
 
     pub fn setup(&mut self, cfg_path: &str) -> RipResult<()> {
@@ -305,7 +306,7 @@ where
                 continue;
             };
 
-            self.update_route_from_response(route_entry, packet.if_info.if_index)
+            self.update_route_from_response(route_entry, &packet.if_info)
                 .await?;
         }
 
@@ -362,11 +363,14 @@ where
         old_route: RipDbEntry,
         route_entry: RipEntry,
         if_index: u32,
+        if_name: String,
     ) -> result::RipResult<()> {
         self.routing_table.delete_route(&old_route).await?;
         self.database.remove_route(&old_route.rip_entry)?;
 
-        let new_route = self.database.add_remote_route(route_entry, if_index)?;
+        let new_route = self
+            .database
+            .add_remote_route(route_entry, if_index, if_name)?;
         self.routing_table.add_route(&new_route).await?;
 
         Ok(())
@@ -375,8 +379,11 @@ where
     async fn update_route_from_response(
         &mut self,
         route_entry: RipEntry,
-        if_index: u32,
+        if_info: &RipIfInfo,
     ) -> result::RipResult<()> {
+        let if_index = if_info.if_index;
+        let if_name = &if_info.if_name;
+
         if route_entry.metric >= RIP_INFINITY_METRIC {
             return self
                 .handle_poisoned_route_from_response(route_entry, if_index)
@@ -389,10 +396,13 @@ where
             // Case 1: no active route to this destination. Learn it.
             None => {
                 self.database.remove_garbage_route(&route_entry);
-                let new_route = self.database.add_remote_route(route_entry, if_index)?;
+                let new_route =
+                    self.database
+                        .add_remote_route(route_entry, if_index, if_name.clone())?;
                 log::info!(
-                    "learned new remote route {} on if_index {}",
+                    "learned new remote route {} on {} ({})",
                     format_entry(&route_entry),
+                    if_name,
                     if_index
                 );
                 self.routing_table.add_route(&new_route).await?;
@@ -401,29 +411,34 @@ where
             // metric got worse, because this neighbor owns our active route.
             Some(old_route) if route_is_from_current_next_hop(&old_route, &route_entry) => {
                 self.database.refresh_route_timeout(&route_entry);
-                if old_route.rip_entry == route_entry && old_route.if_index == if_index {
+                if old_route.rip_entry == route_entry
+                    && old_route.if_index == if_index
+                    && old_route.if_name == *if_name
+                {
                     return Ok(());
                 }
 
                 log::info!(
-                    "updating route {} from current next hop to {} on if_index {}",
+                    "updating route {} from current next hop to {} on {} ({})",
                     format_entry(&old_route.rip_entry),
                     format_entry(&route_entry),
+                    if_name,
                     if_index
                 );
-                self.replace_route_from_response(old_route, route_entry, if_index)
+                self.replace_route_from_response(old_route, route_entry, if_index, if_name.clone())
                     .await?;
             }
             // Case 3: update from another next-hop with a better metric.
             // Switch to it.
             Some(old_route) if old_route.rip_entry.metric > route_entry.metric => {
                 log::info!(
-                    "replacing route {} with better route {} on if_index {}",
+                    "replacing route {} with better route {} on {} ({})",
                     format_entry(&old_route.rip_entry),
                     format_entry(&route_entry),
+                    if_name,
                     if_index
                 );
-                self.replace_route_from_response(old_route, route_entry, if_index)
+                self.replace_route_from_response(old_route, route_entry, if_index, if_name.clone())
                     .await?;
             }
             // Case 4: update from another next-hop with equal or worse metric.
@@ -573,12 +588,32 @@ where
         }
     }
 
-    fn handle_http_request(&self, request: HttpRequest) {
+    fn handle_http_request(&mut self, request: HttpRequest) {
         let response = match request.kind {
             HttpRequestKind::GetRoutes => {
                 let routes = HttpRoute::from_database(&self.database);
                 log::info!("returning {} routes for HTTP routes request", routes.len());
                 HttpResponse::Routes(routes)
+            }
+            HttpRequestKind::AddLocalRoute(network) => {
+                match self.setup_advertised_network(&network) {
+                    Ok(()) => {
+                        log::info!(
+                            "added local route from HTTP request: {}/{} on {}",
+                            network.address,
+                            network.prefix,
+                            network.dev
+                        );
+                        HttpResponse::Ok
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "failed to add local route from HTTP request: {}",
+                            err.to_string()
+                        );
+                        HttpResponse::Error(err.to_string())
+                    }
+                }
             }
         };
 
