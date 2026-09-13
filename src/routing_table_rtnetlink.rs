@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 
 use rtnetlink::{
-    Handle, RouteMessageBuilder, new_connection,
+    Error as RtNetlinkError, Handle, RouteMessageBuilder, new_connection,
     packet_route::route::{RouteMessage, RouteProtocol},
 };
 
@@ -29,26 +29,54 @@ impl RtNetlinkRoutingTableDriver {
 
 impl RoutingTableDriver for RtNetlinkRoutingTableDriver {
     async fn add_route(&mut self, route: &RipDbEntry) -> RipResult<()> {
-        log::info!("adding route to kernel: {}", format_route(route));
+        let route_description = format_route(route);
+        log::info!("adding route to kernel: {}", route_description);
         let route = build_route_message(route);
-        self.handle
-            .route()
-            .add(route)
-            .execute()
-            .await
-            .map_err(|err| RipError::IoError(format!("failed to add route: {}", err)))
+
+        match self.handle.route().add(route).execute().await {
+            Ok(()) => Ok(()),
+            Err(err) if is_netlink_errno(&err, &[libc::EEXIST]) => {
+                log::warn!(
+                    "kernel route already exists, ignoring add error: {}, route {}",
+                    err,
+                    route_description
+                );
+                Ok(())
+            }
+            Err(err) => Err(RipError::IoError(format!("failed to add route: {}", err))),
+        }
     }
 
     async fn delete_route(&mut self, route: &RipDbEntry) -> RipResult<()> {
-        log::info!("deleting route from kernel: {}", format_route(route));
+        let route_description = format_route(route);
+        log::info!("deleting route from kernel: {}", route_description);
         let route = build_route_message(route);
-        self.handle
-            .route()
-            .del(route)
-            .execute()
-            .await
-            .map_err(|err| RipError::IoError(format!("failed to delete route: {}", err)))
+
+        match self.handle.route().del(route).execute().await {
+            Ok(()) => Ok(()),
+            Err(err) if is_netlink_errno(&err, &[libc::ENOENT, libc::ESRCH]) => {
+                log::warn!(
+                    "kernel route is already absent, ignoring delete error: {}, route {}",
+                    err,
+                    route_description
+                );
+                Ok(())
+            }
+            Err(err) => Err(RipError::IoError(format!(
+                "failed to delete route: {}",
+                err
+            ))),
+        }
     }
+}
+
+fn is_netlink_errno(error: &RtNetlinkError, errno_values: &[i32]) -> bool {
+    let RtNetlinkError::NetlinkError(message) = error else {
+        return false;
+    };
+
+    let errno = message.raw_code().abs();
+    errno_values.contains(&errno)
 }
 
 fn format_route(route: &RipDbEntry) -> String {
